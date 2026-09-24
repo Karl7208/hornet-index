@@ -1,0 +1,64 @@
+name: daily-hornet-index
+
+on:
+  schedule:
+    - cron: '30 21 * * *'      # 매일 06:30 KST — 전날 관측 기준
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '기준 날짜 (YYYY-MM-DD, 비우면 어제)'
+        required: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-hornet-index
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330          # 첫 실행은 1월 1일부터 받느라 오래 걸릴 수 있음
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: 관측 받기 + 지수 계산
+        env:
+          KMA_KEY: ${{ secrets.KMA_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python run_daily.py --date "${{ github.event.inputs.date }}"
+          else
+            python run_daily.py
+          fi
+
+      - name: 관측 보관소·요약표 커밋 (실패해도 받은 관측은 남김)
+        if: always()
+        run: |
+          git config user.name  "hornet-index-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/stations data/archive 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "관측·요약 갱신 $(date -u +%F)"
+          git push
+
+      - name: 지도 페이지 묶기
+        run: |
+          mkdir -p _site/data
+          cp index.html _site/
+          cp -r data/latest _site/data/latest
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
