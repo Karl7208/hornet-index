@@ -1,0 +1,18 @@
+name: kma-test
+
+on:
+  workflow_dispatch:        # Actions 화면의 Run workflow 버튼으로만 실행
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 기상청 API허브 접속 시험
+        env:
+          KMA_KEY: ${{ secrets.KMA_KEY }}
+        run: python kma_probe.py
