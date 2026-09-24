@@ -1,0 +1,10 @@
+out/
+__pycache__/
+*.pyc
+.env
+data/import/done/
+data/latest/
+_site/
+data/days/
+data/latest_tmp/
+data/latest_old/

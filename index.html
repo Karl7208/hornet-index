@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>말벌 활동 지수 (운영 시험판)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#EDF0EB;--surface:#fff;--ink:#1B2420;--muted:#5C6962;--line:#D3DAD4;--pine:#22463A;--amber:#E3A21A;--rust:#9E3F27;
+  font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#111613;--surface:#19201C;--ink:#E4EAE6;--muted:#98A69E;--line:#2B3630;--pine:#7FC2A5}}
+*{box-sizing:border-box} html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);display:grid;grid-template-rows:auto 1fr;padding-top:env(safe-area-inset-top,0px)}
+header{padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface)}
+h1{margin:0;font-size:1.1rem}
+.sub{font-size:.82rem;color:var(--muted);margin-top:2px}
+.wrap{display:grid;grid-template-columns:300px 1fr;min-height:0}
+aside{overflow:auto;padding:12px 14px;border-right:1px solid var(--line);background:var(--surface)}
+#map{height:100%;min-height:360px;background:#fff}
+.basetop{mix-blend-mode:multiply}
+.gray-tiles{filter:grayscale(1) contrast(1.05) brightness(1.08)}
+@media (max-width:760px){.wrap{grid-template-columns:1fr;grid-template-rows:55vh auto}aside{order:2;border-right:0;border-top:1px solid var(--line)}}
+fieldset{border:0;padding:0;margin:0 0 12px}
+legend{font-weight:600;font-size:.9rem;margin-bottom:6px}
+label.r{display:block;padding:5px 0;font-size:.9rem;cursor:pointer}
+.stat{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:.85rem}
+.stat dt{color:var(--muted)} .stat dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.warn{border-left:3px solid var(--rust);padding:6px 8px;font-size:.82rem;margin:6px 0;background:color-mix(in srgb,var(--rust) 10%,transparent)}
+.note{font-size:.78rem;color:var(--muted);margin-top:10px;line-height:1.5}
+.bar{height:10px;border-radius:3px;margin:4px 0 2px}
+.ticks{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:.8rem;font-variant-numeric:tabular-nums}
+th,td{padding:3px 4px;border-bottom:1px solid var(--line);text-align:right} th:first-child,td:first-child{text-align:left}
+input[type=range]{width:100%}
+</style>
+</head>
+<body>
+<header>
+  <h1>말벌 활동 지수 <span style="font-weight:400;color:var(--muted)">운영 시험판</span></h1>
+  <div class="sub"><select id="daySel" aria-label="날짜 선택" style="font:inherit;padding:2px 4px;margin-right:6px;display:none"></select><span id="dateLine">불러오는 중…</span></div>
+</header>
+<div class="wrap">
+  <aside>
+    <fieldset id="layers"><legend>지도 층</legend></fieldset>
+    <fieldset><legend>배경</legend>
+      <label class="r"><input type="radio" name="bg" value="gray" checked> 회색 지도 (지명 위에 표시)</label>
+      <label class="r" id="bgVworld" style="display:none"><input type="radio" name="bg" value="vworld"> 브이월드 백지도</label>
+      <label class="r"><input type="radio" name="bg" value="white"> 흰색 (지도 없이)</label>
+      <label class="r"><input type="radio" name="bg" value="osm"> 일반 컬러 지도</label>
+    </fieldset>
+    <label class="r"><input type="checkbox" id="chronicOn" checked> 상습 지역 빗금 (이 계절 8년 중 7년 이상 핫스팟)</label>
+    <label class="r">투명도 <input type="range" id="op" min="0.2" max="1" step="0.05" value="0.85"></label>
+    <div id="legend"></div>
+    <fieldset><legend>오늘 요약</legend><dl class="stat" id="stats"></dl></fieldset>
+    <div id="warns"></div>
+    <fieldset><legend>시군구별 7일 지수 상위 20곳</legend><div id="regions"></div></fieldset>
+    <p class="note" id="label"></p>
+  </aside>
+  <div id="map"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const LAYERS = [
+  ['alert','말벌 경보 (공개용)','alert'],
+  ['cwri','말벌 활동 지수 (오늘)','idx'], ['cwri7','말벌 활동 지수 (7일 평균)','idx'],
+  ['gi_class','말벌 활동 핫스팟 (7일, Gi*)','gi'], ['overlap30','말벌·꿀벌 활동 겹친 날 (30일)','days'],
+  ['baie','꿀벌 출입 활동 (오늘)','bee'],
+  ['csi_V_velutina','등검은말벌','idx'], ['csi_V_mandarinia','장수말벌','idx'], ['csi_V_crabro','말벌','idx'],
+  ['csi_V_simillima','좀말벌','idx'], ['csi_V_analis','꼬마장수말벌','idx']];
+const LEG = {
+  idx:{g:'linear-gradient(90deg,rgba(255,250,220,.6),#fee391,#fec44f,#fe9929,#d95f0e,#993404)',t:['0 낮음','50','100 높음']},
+  bee:{g:'linear-gradient(90deg,rgba(199,233,192,.4),#74c476,#006d2c)',t:['0','50','100']},
+  days:{g:'linear-gradient(90deg,rgba(218,218,235,.4),#9e9ac8,#6a51a3,#3f007d)',t:['0일','15일','30일']},
+  alert:{g:'linear-gradient(90deg,#fed976 0 33%,#fd8d3c 33% 66%,#bd0026 66%)',t:['주의 (P75)','경계 (P90)','심각 (P97)']},
+  gi:{g:'linear-gradient(90deg,#67a9cf 0 25%,transparent 25% 40%,#fddbc7 40% 60%,#ef8a62 60% 80%,#b2182b 80%)',t:['냉점','','90%','95%','99% 핫스팟']}};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const map = L.map('map').setView([36.2, 127.8], 7);
+// 배경 지도 ─ 지도를 지수 '위'에 겹치고 곱하기(multiply)로 섞음:
+//   지도의 흰 부분은 투명해지고 도로·경계·지명만 지수 색 위에 찍힘 → 투명도를 올려도 지명이 안 가려짐
+const VWORLD_KEY = '';   // 브이월드(vworld.kr) 무료 인증키를 넣으면 '브이월드 백지도' 선택지가 나타남
+map.createPane('basetop'); map.getPane('basetop').style.zIndex = 640;
+map.getPane('basetop').style.pointerEvents = 'none'; map.getPane('basetop').classList.add('basetop');
+map.createPane('land'); map.getPane('land').style.zIndex = 250;
+const OSM_ATTR = '© OpenStreetMap';
+const BG = {
+  gray:   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 13, pane: 'basetop', className: 'gray-tiles', attribution: OSM_ATTR }),
+  vworld: VWORLD_KEY ? L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/white/{z}/{y}/{x}.png`, { maxZoom: 13, pane: 'basetop', attribution: '© 국토교통부 브이월드' }) : null,
+  osm:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 13, attribution: OSM_ATTR })
+};
+if (VWORLD_KEY) document.getElementById('bgVworld').style.display = '';
+let bgNow = null, land = null;
+function setBg(k){
+  Object.values(BG).forEach(l => l && map.hasLayer(l) && map.removeLayer(l));
+  if (land) { map.removeLayer(land); land = null; }
+  if (BG[k]) BG[k].addTo(map);
+  if (k === 'white' && meta) land = L.imageOverlay(BASE + 'land.png', meta.bounds, { pane: 'land' }).addTo(map);
+  bgNow = k;
+}
+document.querySelectorAll('input[name=bg]').forEach(r => r.onchange = () => setBg(r.value));
+setBg(VWORLD_KEY ? 'vworld' : 'gray');
+if (VWORLD_KEY) document.querySelector('input[name=bg][value=vworld]').checked = true;
+let overlay, chronic, meta, BASE = 'data/latest/', current = 'alert';
+const bust = () => '?v=' + Date.now();
+
+// 레이어 목록·체크박스 (한 번만 만듦)
+const fs = document.getElementById('layers');
+LAYERS.forEach(([k, name], i) => {
+  const l = document.createElement('label'); l.className = 'r';
+  l.innerHTML = `<input type="radio" name="ly" value="${k}" ${i === 0 ? 'checked' : ''}> ${esc(name)}`;
+  fs.appendChild(l);
+});
+fs.onchange = e => { current = e.target.value; show(current); };
+document.getElementById('chronicOn').onchange = () => drawChronic();
+document.getElementById('op').oninput = e => overlay && overlay.setOpacity(+e.target.value);
+
+function show(k){
+  if (!meta) return;
+  if (overlay) map.removeLayer(overlay);
+  overlay = L.imageOverlay(BASE + k + '.png' + bust(), meta.bounds, { opacity: +document.getElementById('op').value }).addTo(map);
+  const typ = LAYERS.find(x => x[0] === k)[2], lg = LEG[typ];
+  document.getElementById('legend').innerHTML = `<div class="bar" style="background:${lg.g}"></div><div class="ticks">${lg.t.map(x => `<span>${x}</span>`).join('')}</div>`;
+  drawChronic();
+}
+function drawChronic(){
+  if (chronic) { map.removeLayer(chronic); chronic = null; }
+  if (meta && document.getElementById('chronicOn').checked) {
+    chronic = L.imageOverlay(BASE + 'chronic.png' + bust(), meta.bounds, { opacity: 1 }).addTo(map);
+    chronic.bringToFront();
+  }
+}
+
+async function load(base){
+  BASE = base;
+  try {
+    const m = await (await fetch(BASE + 'meta.json' + bust())).json();
+    meta = m;
+    document.getElementById('dateLine').textContent = `${m.date} 관측 기준, 관측소 ${m.n_stations_today}곳`;
+    const s = m.stats;
+    document.getElementById('stats').innerHTML = [
+      ['전국 단계', m.national_stage || '-'],
+      ['주의 · 경계 · 심각 면적', `${s.pct_alert_1}% · ${s.pct_alert}% · ${s.pct_alert_3}%`],
+      ['단계 기준 (7일 지수)', m.breakpoints ? `${m.breakpoints.caution} / ${m.breakpoints.warning ?? '-'} / ${m.breakpoints.severe ?? '-'}` : '-'],
+      ['상습 지역 면적', (s.pct_chronic ?? '-') + '%'],
+      ['말벌 활동 지수 평균', s.cwri_mean], ['상위 25% 값 / 활동 임계', `${s.cwri_p75} / ${m.thresholds.tau_wasp}`],
+      ['말벌 활동 임계 넘은 면적', s.pct_wasp_active + '%'], ['핫스팟 면적 (7일)', s.pct_hotspot_7d + '%'],
+      ['꿀벌 출입 평균', s.baie_mean], ['겹친 날 평균 (30일)', s.overlap30_mean + '일'], ['평균기온 중앙값', s.tavg_median + '°C']
+    ].map(([a, b]) => `<dt>${a}</dt><dd>${esc(b)}</dd>`).join('');
+    document.getElementById('warns').innerHTML = (m.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join('');
+    document.getElementById('label').textContent = m.label + ' 확정된 말벌 신고가 쌓이면 이 지수와 비교해 검증합니다.';
+    show(current);
+    if (bgNow === 'white') setBg('white');
+    const t = await fetch(BASE + 'regions.csv' + bust()).then(r => r.ok ? r.text() : '');
+    if (t) {
+      const rows = t.replace(/^\ufeff/, '').trim().split('\n').map(l => l.split(','));
+      const h = rows[0], ix = n => h.indexOf(n);
+      const body = rows.slice(1).sort((a, b) => b[ix('cwri7')] - a[ix('cwri7')]).slice(0, 20);
+      document.getElementById('regions').innerHTML = `<table><tr><th>지역</th><th>7일 지수</th><th>경계↑</th><th>겹친 날</th></tr>` +
+        body.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[ix('cwri7')])}</td><td>${esc(r[ix('pct_alert')])}%</td><td>${esc(r[ix('overlap30')])}</td></tr>`).join('') + '</table>';
+    }
+  } catch (e) {
+    document.getElementById('dateLine').textContent = '아직 계산 결과가 없습니다. run_daily.py 를 먼저 실행해 주세요.';
+  }
+}
+
+// 날짜 목록 (로컬에서 여러 날짜를 계산해 둔 경우에만 나타남)
+fetch('data/days/index.json' + bust()).then(r => r.ok ? r.json() : []).then(days => {
+  const sel = document.getElementById('daySel');
+  if (!days.length) return;
+  sel.innerHTML = '<option value="">최신</option>' + days.slice().reverse().map(d => `<option value="${d}">${d}</option>`).join('');
+  sel.style.display = '';
+  sel.onchange = () => load(sel.value ? `data/days/${sel.value}/` : 'data/latest/');
+}).catch(() => {});
+load('data/latest/');
+</script>
+</body>
+</html>
