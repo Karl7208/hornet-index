@@ -98,7 +98,7 @@ def write_local(grid, day, cw_hist, cw_days, cw7, ac, chronic, thr):
 
     clim = None
     if os.path.exists(CLIM):
-        c = pd.read_csv(CLIM, encoding='utf-8-sig')
+        c = pd.read_csv(CLIM, encoding='utf-8-sig').fillna(0)          # 연초 1~4일은 7일 평균 빈칸 → 0 (겨울)
         clim = {(int(a), b): (m, lo, hi) for a, b, m, lo, hi in zip(c['code'], c['md'], c['cwri7_mean'], c['cwri7_p10'], c['cwri7_p90'])}
     md = lambda d: d.strftime('%m-%d') if d.strftime('%m-%d') != '02-29' else '02-28'
 
