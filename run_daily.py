@@ -71,6 +71,74 @@ def kst_yesterday():
     return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)).date() - dt.timedelta(days=1)
 
 
+CLIM = os.path.join(ROOT, 'data', 'static', 'climatology_sgg.csv')
+OUTLOOK_DAYS = 14
+ANOMALY_DECAY = 0.8          # 오늘의 평년 대비 차이가 하루에 20%씩 줄어 평년으로 수렴 (지속 예보)
+
+
+def stage_of(v, t):
+    t1, t2, t3 = t
+    return '심각' if v >= t3 else '경계' if v >= t2 else '주의' if v >= t1 else '관심'
+
+
+def write_local(grid, day, cw_hist, cw_days, cw7, ac, chronic, thr):
+    """시민용 '우리 지역' 자료: data/latest/local/regions.json(목록) + <코드>.json(시군구별)"""
+    from pyproj import Transformer
+    codes = grid.regions.astype(int)
+    nreg = int(codes.max()) + 1
+    ok = codes > 0
+    cnt = np.bincount(codes[ok], minlength=nreg).astype(float)
+    mean = lambda v: np.bincount(codes[ok], weights=np.nan_to_num(v[ok]), minlength=nreg) / np.maximum(cnt, 1)
+
+    daily = np.vstack([mean(c) for c in cw_hist])                       # [날짜, 시군구]
+    roll = np.vstack([daily[max(0, i - 6):i + 1].mean(axis=0) for i in range(len(daily))])
+    today7 = mean(cw7)
+    p1, p2, p3 = mean((ac >= 1).astype(float)), mean((ac >= 2).astype(float)), mean((ac >= 3).astype(float))
+    pchr = mean(chronic.astype(float))
+
+    clim = None
+    if os.path.exists(CLIM):
+        c = pd.read_csv(CLIM, encoding='utf-8-sig')
+        clim = {(int(a), b): (m, lo, hi) for a, b, m, lo, hi in zip(c['code'], c['md'], c['cwri7_mean'], c['cwri7_p10'], c['cwri7_p90'])}
+    md = lambda d: d.strftime('%m-%d') if d.strftime('%m-%d') != '02-29' else '02-28'
+
+    tr = Transformer.from_crs('EPSG:5186', 'EPSG:4326', always_xy=True)
+    out_dir = os.path.join(LATEST, 'local'); os.makedirs(out_dir, exist_ok=True)
+    listing = []
+    for code, name in sorted(grid.region_names.items()):
+        m = grid.regions == code
+        if not m.any():
+            continue
+        xy = grid.xy[m]
+        lon, lat = tr.transform([xy[:, 0].min() - 500, xy[:, 0].max() + 500], [xy[:, 1].min() - 500, xy[:, 1].max() + 500])
+        clon, clat = tr.transform(xy[:, 0].mean(), xy[:, 1].mean())
+        v7 = round(float(today7[code]), 1)
+        rec = {'code': code, 'name': name, 'bbox': [[round(lat[0], 4), round(lon[0], 4)], [round(lat[1], 4), round(lon[1], 4)]],
+               'center': [round(clat, 4), round(clon, 4)], 'cw7': v7, 'stage': stage_of(v7, thr)}
+        listing.append(rec)
+        series = [{'d': d.isoformat(), 'cw': round(float(daily[i, code]), 1), 'cw7': round(float(roll[i, code]), 1)} for i, d in enumerate(cw_days)]
+        detail = {**rec, 'date': day.isoformat(), 'thresholds': [round(float(x), 2) for x in thr],
+                  'pct': {'주의': round(float(p1[code] * 100), 1), '경계': round(float(p2[code] * 100), 1), '심각': round(float(p3[code] * 100), 1)},
+                  'chronic_pct': round(float(pchr[code] * 100), 1), 'series': series, 'clim': [], 'outlook': []}
+        if clim:
+            span = [cw_days[0] + dt.timedelta(days=k) for k in range((day - cw_days[0]).days + OUTLOOK_DAYS + 1)]
+            detail['clim'] = [{'d': d.isoformat(), 'm': clim[(code, md(d))][0], 'lo': clim[(code, md(d))][1], 'hi': clim[(code, md(d))][2]}
+                              for d in span if (code, md(d)) in clim]
+            base = clim.get((code, md(day)))
+            if base:
+                a0 = v7 - base[0]
+                for k in range(1, OUTLOOK_DAYS + 1):
+                    d = day + dt.timedelta(days=k); b = clim.get((code, md(d)))
+                    if b:
+                        detail['outlook'].append({'d': d.isoformat(), 'v': round(float(np.clip(b[0] + a0 * ANOMALY_DECAY ** k, 0, 100)), 1)})
+                detail['anomaly'] = round(float(a0), 1)
+        with open(os.path.join(out_dir, f'{code}.json'), 'w', encoding='utf-8') as f:
+            json.dump(detail, f, ensure_ascii=False, separators=(',', ':'))
+    with open(os.path.join(out_dir, 'regions.json'), 'w', encoding='utf-8') as f:
+        json.dump({'date': day.isoformat(), 'thresholds': [round(float(x), 2) for x in thr], 'regions': listing}, f, ensure_ascii=False, separators=(',', ':'))
+    return len(listing)
+
+
 def publish(day):
     """임시 폴더 → data/latest 교체 + data/days/<날짜>/ 보관 + 날짜 목록 갱신"""
     import shutil
@@ -86,7 +154,11 @@ def publish(day):
     except OSError:                                    # 윈도우에서 폴더가 잠겨 있으면 파일 단위로 덮어씀
         os.makedirs(LATEST_FINAL, exist_ok=True)
         for f in os.listdir(LATEST):
-            shutil.copy2(os.path.join(LATEST, f), os.path.join(LATEST_FINAL, f))
+            s, t = os.path.join(LATEST, f), os.path.join(LATEST_FINAL, f)
+            if os.path.isdir(s):
+                shutil.rmtree(t, ignore_errors=True); shutil.copytree(s, t)
+            else:
+                shutil.copy2(s, t)
         shutil.rmtree(LATEST, ignore_errors=True)
     shutil.rmtree(old, ignore_errors=True)
     dates = sorted(d for d in os.listdir(DAYS) if os.path.isdir(os.path.join(DAYS, d)))
@@ -129,7 +201,7 @@ def main():
     windows = ix.phenology_windows(tstack, doys)
 
     # 3) 최근 30일 지수 ----------------------------------------------------
-    cw_hist, overlap_days, n_st_today = [], np.zeros(grid.n), 0
+    cw_hist, cw_days, overlap_days, n_st_today = [], [], np.zeros(grid.n), 0
     today = None
     for d in days[-WINDOW_OVERLAP:]:
         g = by_day.get(d.strftime('%Y-%m-%d'))
@@ -147,7 +219,7 @@ def main():
         cwri, per = ix.compute_cwri(w, windows, doy)
         bai = ix.compute_bai_e(w['t'], w['rh'], w['ws'], w['pr'], w['srW'])
         overlap_days += ((cwri > ix.TAU_WASP) & (bai > ix.TAU_BEE)).astype(float)
-        cw_hist.append(cwri)
+        cw_hist.append(cwri); cw_days.append(d)
         if d == day:
             today = dict(cwri=cwri, per=per, bai=bai, wx=w)
             n_st_today = len(pick(g, 'ws'))
@@ -269,6 +341,11 @@ def main():
     }
     with open(os.path.join(LATEST, 'meta.json'), 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
+    try:
+        n_local = write_local(grid, day, cw_hist, cw_days, cw7, ac, chronic_1d, (t1, t2, t3))
+        log(f'  우리 지역 자료: 시군구 {n_local}곳' + (' (평년 전망 포함)' if os.path.exists(CLIM) else ' (평년표 없음 → 전망 생략)'))
+    except Exception as e:
+        warns.append(f'우리 지역 자료를 만들지 못함: {e.__class__.__name__}: {e}')
     publish(day)
     log(f'완료: CWRI 평균 {meta["stats"]["cwri_mean"]}, P75 {p75:.1f} (τ {ix.TAU_WASP}), '
         f'말벌 활동 칸 {meta["stats"]["pct_wasp_active"]}%, 핫스팟 {meta["stats"]["pct_hotspot_7d"]}%, '
