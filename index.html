@@ -78,7 +78,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const map = L.map('map').setView([36.2, 127.8], 7);
 // 배경 지도 ─ 지도를 지수 '위'에 겹치고 곱하기(multiply)로 섞음:
 //   지도의 흰 부분은 투명해지고 도로·경계·지명만 지수 색 위에 찍힘 → 투명도를 올려도 지명이 안 가려짐
-const VWORLD_KEY = '';   // 브이월드(vworld.kr) 무료 인증키를 넣으면 '브이월드 백지도' 선택지가 나타남
+const VWORLD_KEY = 'FD8DE046-E470-4069-81E6-CCA18CE105A9';   // 브이월드(vworld.kr) 무료 인증키를 넣으면 '브이월드 백지도' 선택지가 나타남
 map.createPane('basetop'); map.getPane('basetop').style.zIndex = 640;
 map.getPane('basetop').style.pointerEvents = 'none'; map.getPane('basetop').classList.add('basetop');
 map.createPane('land'); map.getPane('land').style.zIndex = 250;
