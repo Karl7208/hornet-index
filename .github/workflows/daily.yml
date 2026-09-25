@@ -55,7 +55,7 @@ jobs:
       - name: 지도 페이지 묶기
         run: |
           mkdir -p _site/data
-          cp index.html _site/
+          cp index.html local.html _site/
           cp -r data/latest _site/data/latest
       - uses: actions/upload-pages-artifact@v4
         with:
