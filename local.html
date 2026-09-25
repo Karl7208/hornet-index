@@ -43,7 +43,7 @@ svg{width:100%;height:auto;display:block}
 </style>
 </head>
 <body>
-<header><h1><span class="stripe"></span>우리 지역 말벌 활동</h1><span class="note" id="dateLine" style="margin:0"></span></header>
+<header><h1><span class="stripe"></span>우리 지역 말벌 활동</h1><span class="note" id="dateLine" style="margin:0"></span><button type="button" id="langBtn" class="btn" style="padding:6px 10px;font-size:.85rem"></button></header>
 <main>
   <div class="block">
     <div class="where"><div class="name" id="rName">지역을 찾는 중…</div><button class="btn" id="locBtn">내 위치로</button></div>
@@ -78,18 +78,65 @@ svg{width:100%;height:auto;display:block}
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-const VWORLD_KEY = 'FD8DE046-E470-4069-81E6-CCA18CE105A9';                                             // 브이월드 인증키 (비우면 OpenStreetMap)
+const VWORLD_KEY = '';                                             // 브이월드 인증키 (비우면 OpenStreetMap)
 const REPORT_URL = 'https://karl7208.github.io/hornet-report-/';     // 말벌 신고 앱
 const SIDO = { '서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산',
   '세종특별자치시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북',
   '전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주' };
 const STAGES = { '관심': 0, '주의': 1, '경계': 2, '심각': 3 };
-const SAY = {
+/* ── 한국어 / English (신고 앱과 같은 주소라 고른 언어가 이어짐) ── */
+const LANG = (() => {
+  const q = new URLSearchParams(location.search).get('lang');
+  if (q === 'en' || q === 'ko') { try { localStorage.setItem('hr.lang', q); } catch {} return q; }
+  try { const s = localStorage.getItem('hr.lang'); if (s === 'en' || s === 'ko') return s; } catch {}
+  return /^ko/i.test(navigator.language || 'ko') ? 'ko' : 'en';
+})();
+const EN = {
+  '우리 지역 말벌 활동': 'Hornet activity near me', '지역을 찾는 중…': 'Finding your area…', '내 위치로': 'Use my location',
+  '이번 주 말벌 활동': 'Hornet activity this week', '말벌 활동 흐름': 'Activity trend', '이렇게 대비하세요': 'How to stay safe',
+  '말벌·벌집 신고': 'Report a nest', '말벌 발생 지도': 'Sightings map', '우리 지역 지도': 'Map of my area',
+  '색은 1km 단위 말벌 활동 경보(노랑 주의 · 주황 경계 · 빨강 심각)입니다. 기상청 관측을 바탕으로 매일 아침 갱신됩니다.':
+    'Colours show the 1 km hornet activity alert (yellow Caution · orange Warning · red Severe), updated every morning from Korea Meteorological Administration observations.',
+  '전국 보기 (담당자용)': 'Nationwide view (staff)', '시도': 'Province', '시군구': 'City / county',
+  '관심': 'Low', '주의': 'Caution', '경계': 'Warning', '심각': 'Severe',
+  '{d} 관측 기준': 'Observed {d}', '평년과 비슷한 수준입니다.': 'About normal for this time of year.',
+  '평년보다 높습니다 (+{a}).': 'Higher than normal (+{a}).', '평년보다 낮습니다 ({a}).': 'Lower than normal ({a}).',
+  '관측 (7일 평균)': 'Observed (7-day mean)', '앞으로 2주 전망': 'Next 2 weeks (outlook)', '평년 범위': 'Normal range', '오늘': 'Today',
+  '전망은 최근 추세가 서서히 평년으로 돌아간다고 보고 계산한 참고값입니다. 실제 날씨에 따라 달라질 수 있습니다.':
+    'The outlook assumes recent conditions gradually return to normal. It is a guide only and will change with the weather.',
+  '평년 자료가 준비되면 앞으로 2주 전망과 평년 범위가 함께 표시됩니다.': 'The 2-week outlook and normal range will appear once climate data is ready.',
+  '말벌 활동 지수 (7일 평균)': 'Activity index (7-day mean)', '주의 이상 면적': 'Area at Caution or above', '경계 이상 면적': 'Area at Warning or above',
+  '심각 면적': 'Area at Severe', '상습 지역 (이 계절)': 'Recurring hotspot area (this season)',
+  '내 위치를 찾는 중…': 'Finding your location…', '위치를 찾지 못했습니다. 아래 목록에서 골라 주세요.': 'Location not found. Please choose from the list below.',
+  '이 기기는 위치를 알려주지 않습니다. 목록에서 골라 주세요.': 'This device cannot share its location. Please choose from the list.',
+  '자료를 불러오지 못했습니다.': 'Could not load data.', '매일 아침 계산이 끝나면 다시 열어 주세요.': 'Please try again after the morning update.',
+  '우리 지역을 골라 주세요': 'Choose your area',
+  '위의 <b>내 위치로</b>를 누르거나 목록에서 시도와 시군구를 고르면<br>이번 주 말벌 활동과 앞으로의 흐름을 보여 드립니다.':
+    'Tap <b>Use my location</b> or pick your province and city above<br>to see this week’s hornet activity and outlook.',
+  '말벌 활동 흐름 그래프': 'Hornet activity trend chart',
+};
+const T = (ko, vars) => { let s = (LANG === 'en' && EN[ko] != null) ? EN[ko] : ko; if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? ''); return s; };
+function translateDom(){
+  document.documentElement.lang = LANG; if (LANG !== 'en') return;
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); const todo = []; let n;
+  while ((n = w.nextNode())) { if (n.parentElement.closest('script,style')) continue; const t = n.nodeValue.trim(); if (t && EN[t] != null) todo.push([n, t]); }
+  todo.forEach(([n, t]) => n.nodeValue = n.nodeValue.replace(t, EN[t]));
+  document.title = T(document.title);
+}
+const SAY = LANG === 'en' ? {
+  '관심': 'Hornets are not very active now.',
+  '주의': 'Hornets are active. Look around you when outdoors.',
+  '경계': 'Hornets are very active. Check for nests before mowing or hiking.',
+  '심각': 'This is the peak week for hornets. Stay away from nests.' } : {
   '관심': '말벌 활동이 적은 때입니다.',
   '주의': '말벌이 활동하는 때입니다. 야외에서는 주변을 살피세요.',
   '경계': '말벌 활동이 활발합니다. 벌초·산행 전 벌집을 꼭 살피세요.',
   '심각': '말벌 활동이 가장 활발한 한 주입니다. 벌집 근처에 가지 마세요.' };
-const TIPS = {
+const TIPS = LANG === 'en' ? {
+  '관심': ['If you find a nest, do not remove it yourself — call 119.'],
+  '주의': ['Wear light-coloured long sleeves and avoid perfume or strong scents.', 'Insects flying in and out of the ground or a branch may mean a nest.'],
+  '경계': ['Before mowing or visiting graves, tap the grass with a stick and watch for hornets first.', 'Wear light-coloured long sleeves and a hat; avoid perfume.', 'If you disturb a nest, cover your head and move at least 20 m away quickly.'],
+  '심각': ['Postpone work in long grass or around graves, or leave it to professionals.', 'If you disturb a nest, cover your head and move at least 20 m away quickly.', 'If you feel dizzy, get hives or trouble breathing after a sting, call 119 at once.'] } : {
   '관심': ['벌집을 발견하면 직접 없애지 말고 119에 알리세요.'],
   '주의': ['밝은 색 긴 옷을 입고, 향수·향이 강한 화장품은 피하세요.', '벌이 계속 드나드는 땅속·나뭇가지는 벌집일 수 있습니다.'],
   '경계': ['벌초·성묘 전에 막대로 풀숲을 두드려 벌이 나오는지 먼저 보세요.', '밝은 색 긴 옷, 모자를 쓰고 향수는 피하세요.', '벌집을 건드렸다면 머리를 감싸고 20m 이상 빠르게 벗어나세요.'],
@@ -128,17 +175,17 @@ function fillSelects(cur){
 }
 
 function chart(d){
-  const W = 640, H = 250, L = 34, R = 10, T = 14, B = 30;
+  const W = 640, H = 250, L = 34, R = 10, TOP = 14, B = 30;
   const obs = d.series.map(s => ({ t: new Date(s.d), v: s.cw7 }));
   const out = (d.outlook || []).map(s => ({ t: new Date(s.d), v: s.v }));
   const cl = (d.clim || []).map(s => ({ t: new Date(s.d), m: s.m, lo: s.lo, hi: s.hi }));
   const all = [...obs, ...out, ...cl];
   const t0 = Math.min(...all.map(p => +p.t)), t1 = Math.max(...all.map(p => +p.t));
   const ymax = Math.max(70, ...all.map(p => Math.max(p.v ?? 0, p.hi ?? 0))) * 1.05;
-  const X = t => L + (W - L - R) * (+t - t0) / Math.max(1, t1 - t0), Y = v => T + (H - T - B) * (1 - v / ymax);
+  const X = t => L + (W - L - R) * (+t - t0) / Math.max(1, t1 - t0), Y = v => TOP + (H - TOP - B) * (1 - v / ymax);
   const path = pts => pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
-  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="말벌 활동 흐름 그래프">`;
-  const th = d.thresholds, names = ['주의', '경계', '심각'], cols = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${T('말벌 활동 흐름 그래프')}">`;
+  const th = d.thresholds, names = [T('주의'), T('경계'), T('심각')], cols = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
   th.forEach((v, i) => { if (v < ymax) s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${cols[i]}" stroke-width="1" stroke-dasharray="2 4" opacity=".9"/><text x="${W - R}" y="${Y(v) - 3}" font-size="10" text-anchor="end" fill="${cols[i]}">${names[i]}</text>`; });
   if (cl.length) {
     s += `<path d="${cl.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.hi).toFixed(1)}`).join('')}${cl.slice().reverse().map(p => `L${X(p.t).toFixed(1)},${Y(p.lo).toFixed(1)}`).join('')}Z" fill="var(--muted)" opacity=".13"/>`;
@@ -147,16 +194,16 @@ function chart(d){
   if (out.length) s += `<path d="${path([obs[obs.length - 1], ...out])}" fill="none" stroke="var(--pine)" stroke-width="2.4" stroke-dasharray="6 5"/>`;
   s += `<path d="${path(obs)}" fill="none" stroke="var(--pine)" stroke-width="2.8"/>`;
   const last = obs[obs.length - 1];
-  s += `<line x1="${X(last.t)}" x2="${X(last.t)}" y1="${T}" y2="${H - B}" stroke="var(--ink)" stroke-width="1" opacity=".35"/><text x="${X(last.t) + 3}" y="${T + 10}" font-size="10" fill="var(--ink)">오늘</text>`;
+  s += `<line x1="${X(last.t)}" x2="${X(last.t)}" y1="${TOP}" y2="${H - B}" stroke="var(--ink)" stroke-width="1" opacity=".35"/><text x="${X(last.t) + 3}" y="${TOP + 10}" font-size="10" fill="var(--ink)">${T('오늘')}</text>`;
   s += `<circle cx="${X(last.t)}" cy="${Y(last.v)}" r="4.5" fill="var(--pine)"/>`;
   [0, 25, 50, 75, 100].filter(v => v <= ymax).forEach(v => s += `<text x="${L - 5}" y="${Y(v) + 3}" font-size="10" text-anchor="end" fill="var(--muted)">${v}</text>`);
   for (let t = t0; t <= t1; t += 7 * 864e5) { const dd = new Date(t); s += `<text x="${X(t)}" y="${H - 10}" font-size="10" text-anchor="middle" fill="var(--muted)">${dd.getMonth() + 1}/${dd.getDate()}</text>`; }
   s += '</svg>';
   $('#chart').innerHTML = s;
-  $('#legend').innerHTML = `<span><i style="background:var(--pine)"></i>관측 (7일 평균)</span>` + (out.length ? `<span><i style="background:repeating-linear-gradient(90deg,var(--pine) 0 6px,transparent 6px 11px)"></i>앞으로 2주 전망</span>` : '') + (cl.length ? `<span><i style="background:var(--muted);opacity:.35;height:9px"></i>평년 범위</span>` : '');
-  $('#chartNote').textContent = out.length
+  $('#legend').innerHTML = `<span><i style="background:var(--pine)"></i>${T('관측 (7일 평균)')}</span>` + (out.length ? `<span><i style="background:repeating-linear-gradient(90deg,var(--pine) 0 6px,transparent 6px 11px)"></i>${T('앞으로 2주 전망')}</span>` : '') + (cl.length ? `<span><i style="background:var(--muted);opacity:.35;height:9px"></i>${T('평년 범위')}</span>` : '');
+  $('#chartNote').textContent = T(out.length
     ? '전망은 최근 추세가 서서히 평년으로 돌아간다고 보고 계산한 참고값입니다. 실제 날씨에 따라 달라질 수 있습니다.'
-    : '평년 자료가 준비되면 앞으로 2주 전망과 평년 범위가 함께 표시됩니다.';
+    : '평년 자료가 준비되면 앞으로 2주 전망과 평년 범위가 함께 표시됩니다.');
 }
 
 function drawMap(d){
@@ -176,25 +223,28 @@ async function show(code){
   const d = await (await fetch(`data/latest/local/${code}.json` + bust)).json();
   try { localStorage.setItem('hi.region', String(code)); } catch {}
   $('#rName').textContent = d.name; $('#body').style.display = ''; $('#emptyBox').style.display = 'none';
-  $('#dateLine').textContent = `${d.date} 관측 기준`;
+  $('#dateLine').textContent = T('{d} 관측 기준', { d: d.date });
   const st = d.stage, el = $('#stage');
   el.className = 'stage s' + STAGES[st];
-  $('#stageBig').textContent = st; $('#stageSay').textContent = SAY[st];
-  $('#cmp').textContent = d.anomaly != null ? (Math.abs(d.anomaly) < 3 ? '평년과 비슷한 수준입니다.' : d.anomaly > 0 ? `평년보다 높습니다 (+${d.anomaly}).` : `평년보다 낮습니다 (${d.anomaly}).`) : '';
+  $('#stageBig').textContent = T(st); $('#stageSay').textContent = SAY[st];
+  $('#cmp').textContent = d.anomaly != null ? (Math.abs(d.anomaly) < 3 ? T('평년과 비슷한 수준입니다.') : d.anomaly > 0 ? T('평년보다 높습니다 (+{a}).', { a: d.anomaly }) : T('평년보다 낮습니다 ({a}).', { a: d.anomaly })) : '';
   $('#tips').innerHTML = TIPS[st].map(t => `<li>${esc(t)}</li>`).join('');
   $('#kv').innerHTML = [['말벌 활동 지수 (7일 평균)', d.cw7], ['주의 이상 면적', d.pct['주의'] + '%'], ['경계 이상 면적', d.pct['경계'] + '%'], ['심각 면적', d.pct['심각'] + '%'], ['상습 지역 (이 계절)', d.chronic_pct + '%']]
-    .map(([a, b]) => `<dt>${a}</dt><dd>${esc(b)}</dd>`).join('');
+    .map(([a, b]) => `<dt>${T(a)}</dt><dd>${esc(b)}</dd>`).join('');
   chart(d); drawMap(d); fillSelects(d);
   const q = new URLSearchParams(location.search); q.set('r', d.name); history.replaceState(null, '', '?' + q.toString());
 }
 
 $('#locBtn').onclick = () => {
-  if (!navigator.geolocation) return alert('이 기기는 위치를 알려주지 않습니다. 목록에서 골라 주세요.');
-  $('#rName').textContent = '내 위치를 찾는 중…';
+  if (!navigator.geolocation) return alert(T('이 기기는 위치를 알려주지 않습니다. 목록에서 골라 주세요.'));
+  $('#rName').textContent = T('내 위치를 찾는 중…');
   navigator.geolocation.getCurrentPosition(p => { const x = findRegion(null, p.coords.latitude, p.coords.longitude); if (x) show(x.code); },
-    () => { $('#rName').textContent = '위치를 찾지 못했습니다. 아래 목록에서 골라 주세요.'; }, { enableHighAccuracy: false, timeout: 12000 });
+    () => { $('#rName').textContent = T('위치를 찾지 못했습니다. 아래 목록에서 골라 주세요.'); }, { enableHighAccuracy: false, timeout: 12000 });
 };
-$('#reportLink').href = REPORT_URL; $('#mapLink').href = REPORT_URL + 'map.html';
+translateDom();
+$('#langBtn').textContent = LANG === 'en' ? '한국어' : 'English';
+$('#langBtn').onclick = () => { const nx = LANG === 'en' ? 'ko' : 'en'; try { localStorage.setItem('hr.lang', nx); } catch {} const q = new URLSearchParams(location.search); q.set('lang', nx); location.search = q.toString(); };
+$('#reportLink').href = REPORT_URL + '?lang=' + LANG; $('#mapLink').href = REPORT_URL + 'map.html?lang=' + LANG;
 
 (async () => {
   try {
@@ -202,7 +252,7 @@ $('#reportLink').href = REPORT_URL; $('#mapLink').href = REPORT_URL + 'map.html'
     LIST = j.regions;
     META = await (await fetch('data/latest/meta.json' + bust)).json().catch(() => null);
   } catch {
-    $('#rName').textContent = '자료를 불러오지 못했습니다.'; $('#emptyBox').style.display = ''; $('#emptyBox').textContent = '매일 아침 계산이 끝나면 다시 열어 주세요.'; return;
+    $('#rName').textContent = T('자료를 불러오지 못했습니다.'); $('#emptyBox').style.display = ''; $('#emptyBox').textContent = T('매일 아침 계산이 끝나면 다시 열어 주세요.'); return;
   }
   const q = new URLSearchParams(location.search);
   let saved = null; try { saved = +localStorage.getItem('hi.region'); } catch {}
@@ -210,8 +260,8 @@ $('#reportLink').href = REPORT_URL; $('#mapLink').href = REPORT_URL + 'map.html'
            || (saved && LIST.find(x => x.code === saved));
   if (hit) return show(hit.code);
   fillSelects(null);
-  $('#rName').textContent = '우리 지역을 골라 주세요';
-  $('#emptyBox').style.display = ''; $('#emptyBox').innerHTML = '위의 <b>내 위치로</b>를 누르거나 목록에서 시도와 시군구를 고르면<br>이번 주 말벌 활동과 앞으로의 흐름을 보여 드립니다.';
+  $('#rName').textContent = T('우리 지역을 골라 주세요');
+  $('#emptyBox').style.display = ''; $('#emptyBox').innerHTML = T('위의 <b>내 위치로</b>를 누르거나 목록에서 시도와 시군구를 고르면<br>이번 주 말벌 활동과 앞으로의 흐름을 보여 드립니다.');
 })();
 </script>
 </body>
