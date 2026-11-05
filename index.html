@@ -36,8 +36,11 @@ input[type=range]{width:100%}
 </head>
 <body>
 <header>
-  <h1>말벌 활동 지수 <span style="font-weight:400;color:var(--muted)">전국 · 담당자용</span></h1>
-  <div class="sub" style="margin-top:4px"><a href="local.html">우리 지역 보기 (시민용)</a> · <a href="https://karl7208.github.io/hornet-report-/map.html">말벌 발생 지도</a> · <a href="https://karl7208.github.io/hornet-report-/review.html">검수</a></div>
+  <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+    <h1>말벌 활동 지수 <span style="font-weight:400;color:var(--muted)">전국 · 담당자용</span></h1>
+    <button id="langBtn" type="button" style="font:inherit;font-size:.8rem;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);cursor:pointer">English</button>
+  </div>
+  <div class="sub" style="margin-top:4px"><a id="lnLocal" href="local.html">우리 지역 보기 (시민용)</a> · <a id="lnMap" href="https://karl7208.github.io/hornet-report-/map.html">말벌 발생 지도</a> · <a id="lnReview" href="https://karl7208.github.io/hornet-report-/review.html">검수</a></div>
   <div class="sub"><select id="daySel" aria-label="날짜 선택" style="font:inherit;padding:2px 4px;margin-right:6px;display:none"></select><span id="dateLine">불러오는 중…</span></div>
 </header>
 <div class="wrap">
@@ -55,6 +58,7 @@ input[type=range]{width:100%}
     <fieldset><legend>오늘 요약</legend><dl class="stat" id="stats"></dl></fieldset>
     <div id="warns"></div>
     <fieldset><legend>시군구별 7일 지수 상위 20곳</legend><div id="regions"></div></fieldset>
+    <fieldset><legend>양봉 농가 노출 (위해와 따로 봄)</legend><div id="expo"></div></fieldset>
     <p class="note" id="label"></p>
   </aside>
   <div id="map"></div>
@@ -66,14 +70,61 @@ const LAYERS = [
   ['cwri','말벌 활동 지수 (오늘)','idx'], ['cwri7','말벌 활동 지수 (7일 평균)','idx'],
   ['gi_class','말벌 활동 핫스팟 (7일, Gi*)','gi'], ['overlap30','말벌·꿀벌 활동 겹친 날 (30일)','days'],
   ['baie','꿀벌 출입 활동 (오늘)','bee'],
-  ['csi_V_velutina','등검은말벌','idx'], ['csi_V_mandarinia','장수말벌','idx'], ['csi_V_crabro','말벌','idx'],
-  ['csi_V_simillima','좀말벌','idx'], ['csi_V_analis','꼬마장수말벌','idx']];
+  ['csi_V_velutina','등검은말벌','idx','V. velutina'], ['csi_V_mandarinia','장수말벌','idx','V. mandarinia'], ['csi_V_crabro','말벌','idx','V. crabro'],
+  ['csi_V_simillima','좀말벌','idx','V. analis'], ['csi_V_analis','꼬마장수말벌','idx','V. ducalis']];   // 코드 키 ≠ 학명 (래스터 폴더 이름 유지)
 const LEG = {
   idx:{g:'linear-gradient(90deg,rgba(255,250,220,.6),#fee391,#fec44f,#fe9929,#d95f0e,#993404)',t:['0 낮음','50','100 높음']},
   bee:{g:'linear-gradient(90deg,rgba(199,233,192,.4),#74c476,#006d2c)',t:['0','50','100']},
   days:{g:'linear-gradient(90deg,rgba(218,218,235,.4),#9e9ac8,#6a51a3,#3f007d)',t:['0일','15일','30일']},
-  alert:{g:'linear-gradient(90deg,#fed976 0 33%,#fd8d3c 33% 66%,#bd0026 66%)',t:['주의 (P75)','경계 (P90)','심각 (P97)']},
+  alert:{g:'linear-gradient(90deg,#fed976 0 33%,#fd8d3c 33% 66%,#bd0026 66%)',t:['주의 (τ)','경계 (P90)','심각 (P97)']},
   gi:{g:'linear-gradient(90deg,#67a9cf 0 25%,transparent 25% 40%,#fddbc7 40% 60%,#ef8a62 60% 80%,#b2182b 80%)',t:['냉점','','90%','95%','99% 핫스팟']}};
+
+// ── 한국어 / English (담당자 화면; 지역 이름·경고문은 한국어 그대로) ──
+const LANG = (() => { const q = new URLSearchParams(location.search).get('lang'); if (q === 'en' || q === 'ko') return q;
+  try { const s = localStorage.getItem('hr.lang'); if (s) return s; } catch {} return (navigator.language || '').startsWith('ko') ? 'ko' : 'en'; })();
+const EN = {
+  '말벌 활동 지수': 'Hornet activity index', '전국 · 담당자용': 'National · staff', '우리 지역 보기 (시민용)': 'My area (citizens)',
+  '말벌 발생 지도': 'Sightings map', '검수': 'Review', '지도 층': 'Map layer', '배경': 'Base map',
+  '회색 지도 (지명 위에 표시)': 'Grey map (labels on top)', '브이월드 백지도': 'VWorld white map', '흰색 (지도 없이)': 'White (no map)',
+  '일반 컬러 지도': 'Colour map', '상습 지역 빗금 (이 계절 8년 중 7년 이상 핫스팟)': 'Chronic areas (hotspot in ≥7 of 8 years this season)',
+  '투명도': 'Opacity', '오늘 요약': 'Today', '시군구별 7일 지수 상위 20곳': 'Top 20 districts (7-day index)',
+  '양봉 농가 노출 (위해와 따로 봄)': 'Beekeeper exposure (kept separate from hazard)',
+  '말벌 경보 (공개용)': 'Hornet alert (public)', '말벌 활동 지수 (오늘)': 'Hornet activity index (CWRI, today)',
+  '말벌 활동 지수 (7일 평균)': 'Hornet activity index (CWRI, 7-day mean)', '말벌 활동 핫스팟 (7일, Gi*)': 'Activity hotspots (7-day Gi*)',
+  '말벌·꿀벌 활동 겹친 날 (30일)': 'Hornet–honeybee overlap days (30 d)', '꿀벌 출입 활동 (오늘)': 'Honeybee foraging (BAI_E, today)',
+  '등검은말벌': 'Yellow-legged hornet', '장수말벌': 'Northern giant hornet', '말벌': 'European hornet', '좀말벌': 'Vespa analis', '꼬마장수말벌': 'Vespa ducalis',
+  '0 낮음': '0 low', '100 높음': '100 high', '0일': '0 d', '15일': '15 d', '30일': '30 d',
+  '주의 (τ)': 'Caution (τ)', '경계 (P90)': 'Warning (P90)', '심각 (P97)': 'Severe (P97)', '냉점': 'Cold spot', '99% 핫스팟': '99% hotspot',
+  '전국 단계': 'National level', '주의 · 경계 · 심각 면적': 'Area at caution · warning · severe', '단계 기준 (7일 지수)': 'Level thresholds (7-day CWRI)',
+  '상습 지역 면적': 'Chronic area', '말벌 활동 지수 평균': 'Mean CWRI', '상위 25% 값 / 활동 임계': 'P75 / activity threshold τ',
+  '말벌 활동 임계 넘은 면적': 'Area above τ', '핫스팟 면적 (7일)': 'Hotspot area (7-day)', '꿀벌 출입 평균': 'Mean BAI_E',
+  '겹친 날 평균 (30일)': 'Mean overlap days (30 d)', '평균기온 중앙값': 'Median mean temperature',
+  '관심': 'Low', '주의': 'Caution', '경계': 'Warning', '심각': 'Severe',
+  '지역': 'District', '7일 지수': '7-day CWRI', '경계↑': '≥Warning', '겹친 날': 'Overlap d',
+  '최신': 'Latest', '불러오는 중…': 'Loading…', '{d} 관측 기준, 관측소 {n}곳': 'Observed {d}, {n} stations',
+  '아직 계산 결과가 없습니다. run_daily.py 를 먼저 실행해 주세요.': 'No results yet. Run run_daily.py first.',
+  '운영 메모 {n}건 (한국어)': '{n} operator notes (Korean)',
+  '주의 이상 면적': 'Area ≥ caution', '농가 수': 'Farms', '봉군 수': 'Colonies', '분류': 'Class',
+  '둘 다 높음': 'Both high', '위해만 높음': 'Hazard only', '노출만 높음': 'Exposure only', '둘 다 낮음': 'Both low',
+  '위해 기준': 'Hazard rule', '노출 기준': 'Exposure rule',
+  '양봉 농가 수 자료가 오면 시군구마다 "주의 이상 면적"(위해)과 "농가 수"(노출)를 나란히 보여 주고, 둘을 곱하지 않고 2차원으로 나눕니다.':
+    'When district beekeeper counts arrive, hazard (area ≥ caution) and exposure (farms) are shown side by side and classified in two dimensions — never multiplied.',
+  '자료 상태': 'Status', '양봉 농가 수 자료 대기 중 (정보공개청구)': 'Waiting for beekeeper counts (information-disclosure request)',
+  '지수 정의는 말벌 논문 2와 같습니다 (골든 테스트 통과).': 'Index definitions follow Wasp Paper 2 (golden test passed).',
+  '확정된 말벌 신고가 쌓이면 이 지수와 비교해 검증합니다.': 'Confirmed sightings will be used to validate the index.'
+};
+const T = (ko, v) => { let s = (LANG === 'en' && EN[ko] != null) ? EN[ko] : ko; if (v) s = s.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? ''); return s; };
+function translateDom(){
+  document.documentElement.lang = LANG; if (LANG !== 'en') return;
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n; const todo = [];
+  while ((n = w.nextNode())) { if (n.parentElement.closest('script,style')) continue; const t = n.nodeValue.trim(); if (t && EN[t] != null) todo.push([n, t]); }
+  todo.forEach(([n, t]) => n.nodeValue = n.nodeValue.replace(t, EN[t]));
+  document.title = 'Hornet activity index (pilot)';
+}
+const langBtn = document.getElementById('langBtn');
+langBtn.textContent = LANG === 'en' ? '한국어' : 'English';
+langBtn.onclick = () => { const nx = LANG === 'en' ? 'ko' : 'en'; try { localStorage.setItem('hr.lang', nx); } catch {} const q = new URLSearchParams(location.search); q.set('lang', nx); location.search = q.toString(); };
+['lnLocal', 'lnMap', 'lnReview'].forEach(id => { const a = document.getElementById(id); a.href += (a.href.includes('?') ? '&' : '?') + 'lang=' + LANG; });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const map = L.map('map').setView([36.2, 127.8], 7);
 // 배경 지도 ─ 지도를 지수 '위'에 겹치고 곱하기(multiply)로 섞음:
@@ -105,9 +156,9 @@ const bust = () => '?v=' + Date.now();
 
 // 레이어 목록·체크박스 (한 번만 만듦)
 const fs = document.getElementById('layers');
-LAYERS.forEach(([k, name], i) => {
+LAYERS.forEach(([k, name, , sci], i) => {
   const l = document.createElement('label'); l.className = 'r';
-  l.innerHTML = `<input type="radio" name="ly" value="${k}" ${i === 0 ? 'checked' : ''}> ${esc(name)}`;
+  l.innerHTML = `<input type="radio" name="ly" value="${k}" ${i === 0 ? 'checked' : ''}> ${esc(T(name))}` + (sci ? ` <i style="color:var(--muted)">${esc(sci)}</i>` : '');
   fs.appendChild(l);
 });
 fs.onchange = e => { current = e.target.value; show(current); };
@@ -119,7 +170,7 @@ function show(k){
   if (overlay) map.removeLayer(overlay);
   overlay = L.imageOverlay(BASE + k + '.png' + bust(), meta.bounds, { opacity: +document.getElementById('op').value }).addTo(map);
   const typ = LAYERS.find(x => x[0] === k)[2], lg = LEG[typ];
-  document.getElementById('legend').innerHTML = `<div class="bar" style="background:${lg.g}"></div><div class="ticks">${lg.t.map(x => `<span>${x}</span>`).join('')}</div>`;
+  document.getElementById('legend').innerHTML = `<div class="bar" style="background:${lg.g}"></div><div class="ticks">${lg.t.map(x => `<span>${esc(T(x))}</span>`).join('')}</div>`;
   drawChronic();
 }
 function drawChronic(){
@@ -135,19 +186,24 @@ async function load(base){
   try {
     const m = await (await fetch(BASE + 'meta.json' + bust())).json();
     meta = m;
-    document.getElementById('dateLine').textContent = `${m.date} 관측 기준, 관측소 ${m.n_stations_today}곳`;
+    document.getElementById('dateLine').textContent = T('{d} 관측 기준, 관측소 {n}곳', { d: m.date, n: m.n_stations_today });
     const s = m.stats;
     document.getElementById('stats').innerHTML = [
-      ['전국 단계', m.national_stage || '-'],
+      ['전국 단계', T(m.national_stage || '-')],
       ['주의 · 경계 · 심각 면적', `${s.pct_alert_1}% · ${s.pct_alert}% · ${s.pct_alert_3}%`],
-      ['단계 기준 (7일 지수)', m.breakpoints ? `${m.breakpoints.caution} / ${m.breakpoints.warning ?? '-'} / ${m.breakpoints.severe ?? '-'}` : '-'],
+      ['단계 기준 (7일 지수)', m.breakpoints ? `${m.thresholds.tau_wasp} / ${m.breakpoints.warning ?? '-'} / ${m.breakpoints.severe ?? '-'}` : '-'],
       ['상습 지역 면적', (s.pct_chronic ?? '-') + '%'],
       ['말벌 활동 지수 평균', s.cwri_mean], ['상위 25% 값 / 활동 임계', `${s.cwri_p75} / ${m.thresholds.tau_wasp}`],
       ['말벌 활동 임계 넘은 면적', s.pct_wasp_active + '%'], ['핫스팟 면적 (7일)', s.pct_hotspot_7d + '%'],
       ['꿀벌 출입 평균', s.baie_mean], ['겹친 날 평균 (30일)', s.overlap30_mean + '일'], ['평균기온 중앙값', s.tavg_median + '°C']
-    ].map(([a, b]) => `<dt>${a}</dt><dd>${esc(b)}</dd>`).join('');
-    document.getElementById('warns').innerHTML = (m.warnings || []).map(w => `<div class="warn">${esc(w)}</div>`).join('');
-    document.getElementById('label').textContent = m.label + ' 확정된 말벌 신고가 쌓이면 이 지수와 비교해 검증합니다.';
+    ].map(([a, b]) => `<dt>${esc(T(a))}</dt><dd>${esc(b)}</dd>`).join('');
+    const ws = m.warnings || [];
+    document.getElementById('warns').innerHTML = LANG === 'en'
+      ? (ws.length ? `<div class="warn">${esc(T('운영 메모 {n}건 (한국어)', { n: ws.length }))}</div>` : '')
+      : ws.map(w => `<div class="warn">${esc(w)}</div>`).join('');
+    document.getElementById('label').textContent = LANG === 'en'
+      ? T('지수 정의는 말벌 논문 2와 같습니다 (골든 테스트 통과).') + ' ' + T('확정된 말벌 신고가 쌓이면 이 지수와 비교해 검증합니다.')
+      : m.label + ' 확정된 말벌 신고가 쌓이면 이 지수와 비교해 검증합니다.';
     show(current);
     if (bgNow === 'white') setBg('white');
     const t = await fetch(BASE + 'regions.csv' + bust()).then(r => r.ok ? r.text() : '');
@@ -155,22 +211,43 @@ async function load(base){
       const rows = t.replace(/^\ufeff/, '').trim().split('\n').map(l => l.split(','));
       const h = rows[0], ix = n => h.indexOf(n);
       const body = rows.slice(1).sort((a, b) => b[ix('cwri7')] - a[ix('cwri7')]).slice(0, 20);
-      document.getElementById('regions').innerHTML = `<table><tr><th>지역</th><th>7일 지수</th><th>경계↑</th><th>겹친 날</th></tr>` +
+      document.getElementById('regions').innerHTML = `<table><tr><th>${T('지역')}</th><th>${T('7일 지수')}</th><th>${T('경계↑')}</th><th>${T('겹친 날')}</th></tr>` +
         body.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[ix('cwri7')])}</td><td>${esc(r[ix('pct_alert')])}%</td><td>${esc(r[ix('overlap30')])}</td></tr>`).join('') + '</table>';
     }
+    drawExposure(await fetch(BASE + 'exposure.json' + bust()).then(r => r.ok ? r.json() : null).catch(() => null));
   } catch (e) {
-    document.getElementById('dateLine').textContent = '아직 계산 결과가 없습니다. run_daily.py 를 먼저 실행해 주세요.';
+    document.getElementById('dateLine').textContent = T('아직 계산 결과가 없습니다. run_daily.py 를 먼저 실행해 주세요.');
   }
+}
+
+// 위해–노출 2차원 분류 (곱하지 않음). 자료가 없으면 자리만 보여 줌
+function drawExposure(x){
+  const el = document.getElementById('expo');
+  const intro = `<p class="note" style="margin-top:0">${esc(T('양봉 농가 수 자료가 오면 시군구마다 "주의 이상 면적"(위해)과 "농가 수"(노출)를 나란히 보여 주고, 둘을 곱하지 않고 2차원으로 나눕니다.'))}</p>`;
+  if (!x || !x.rows || !x.rows.length) {
+    el.innerHTML = intro + `<dl class="stat"><dt>${esc(T('자료 상태'))}</dt><dd>${esc(T((x && x.status) || '양봉 농가 수 자료 대기 중 (정보공개청구)'))}</dd></dl>`;
+    return;
+  }
+  const cnt = {}; x.rows.forEach(r => cnt[r.class] = (cnt[r.class] || 0) + 1);
+  const cls = ['둘 다 높음', '위해만 높음', '노출만 높음', '둘 다 낮음'];
+  el.innerHTML = intro +
+    `<table style="margin-bottom:6px"><tr><th></th><th>${LANG === 'en' ? 'Exposure high' : '노출 높음'}</th><th>${LANG === 'en' ? 'Exposure low' : '노출 낮음'}</th></tr>` +
+    `<tr><td>${LANG === 'en' ? 'Hazard high' : '위해 높음'}</td><td>${cnt[cls[0]] || 0}</td><td>${cnt[cls[1]] || 0}</td></tr>` +
+    `<tr><td>${LANG === 'en' ? 'Hazard low' : '위해 낮음'}</td><td>${cnt[cls[2]] || 0}</td><td>${cnt[cls[3]] || 0}</td></tr></table>` +
+    `<dl class="stat"><dt>${T('위해 기준')}</dt><dd>${esc(x.hazard_rule)}</dd><dt>${T('노출 기준')}</dt><dd>${esc(x.exposure_rule)}</dd></dl>` +
+    `<table style="margin-top:6px"><tr><th>${T('지역')}</th><th>${T('주의 이상 면적')}</th><th>${T('농가 수')}</th><th>${T('분류')}</th></tr>` +
+    x.rows.slice(0, 25).map(r => `<tr><td>${esc(r.region)}</td><td>${r.pct_caution}%</td><td>${r.farms}${r.colonies != null ? ` <span style="color:var(--muted)">(${r.colonies})</span>` : ''}</td><td>${esc(T(r.class))}</td></tr>`).join('') + '</table>';
 }
 
 // 날짜 목록 (로컬에서 여러 날짜를 계산해 둔 경우에만 나타남)
 fetch('data/days/index.json' + bust()).then(r => r.ok ? r.json() : []).then(days => {
   const sel = document.getElementById('daySel');
   if (!days.length) return;
-  sel.innerHTML = '<option value="">최신</option>' + days.slice().reverse().map(d => `<option value="${d}">${d}</option>`).join('');
+  sel.innerHTML = `<option value="">${T('최신')}</option>` + days.slice().reverse().map(d => `<option value="${d}">${d}</option>`).join('');
   sel.style.display = '';
   sel.onchange = () => load(sel.value ? `data/days/${sel.value}/` : 'data/latest/');
 }).catch(() => {});
+translateDom();
 load('data/latest/');
 </script>
 </body>

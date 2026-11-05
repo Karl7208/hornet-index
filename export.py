@@ -99,7 +99,7 @@ def region_summary(grid, layers):
         m = grid.regions == code
         if not m.any():
             continue
-        r = {'region': name, 'n_cells': int(m.sum())}
+        r = {'region': name, 'code': int(code), 'n_cells': int(m.sum())}
         for k, v in layers.items():
             vv = v[m]
             if k.startswith('pct_'):

@@ -6,6 +6,7 @@
 - 지역:   data/static/regions_1km.tif + regions.csv (시도 또는 시군 코드) — 요약표용
 - 고도:   data/static/dem_1km.tif (선택) — 있으면 기온에 고도 보정(−6.5 °C/km)
 - 보간:   가까운 관측소 8곳 역거리가중(IDW, 거리² 가중)
+- 일사:   칸 위도(lat), 고도(elev, DEM 없으면 0), kRs(data/static/krs_stations.csv 의 가장 가까운 지점, 없으면 0.16)
 """
 import os
 import numpy as np
@@ -20,6 +21,7 @@ IDW_POWER = 2.0
 TEMP_VARS = ('tavg', 'tmax', 'tmin')
 
 _to5186 = Transformer.from_crs('EPSG:4326', 'EPSG:5186', always_xy=True)
+_to4326 = Transformer.from_crs('EPSG:5186', 'EPSG:4326', always_xy=True)
 
 
 class Grid:
@@ -50,6 +52,20 @@ class Grid:
                     self.dem = self.dem2d[self.mask]
                     self.dem_ok = self.dem_ok2d[self.mask]
 
+        # 일사(Hargreaves)용: 칸 위도·고도·kRs
+        _, self.lat = _to4326.transform(self.xy[:, 0], self.xy[:, 1])
+        self.elev = self.dem if self.dem is not None else np.zeros(self.n)
+        self.krs = np.full(self.n, 0.16)
+        self.krs_source = 'FAO-56 내륙 기본값 0.16 (krs_stations.csv 없음)'
+        p = os.path.join(static_dir, 'krs_stations.csv')
+        if os.path.exists(p):
+            import pandas as pd
+            k = pd.read_csv(p, encoding='utf-8-sig').dropna(subset=['lat', 'lon', 'krs'])
+            kx, ky = _to5186.transform(k['lon'].values, k['lat'].values)
+            _, i = cKDTree(np.column_stack([kx, ky])).query(self.xy, k=1)
+            self.krs = k['krs'].values[i].astype(np.float64)
+            self.krs_source = f'FAO-56 kRs, 가장 가까운 지점 {len(k):,}곳 (해안 0.19 {np.mean(self.krs > 0.17) * 100:.0f}% 칸)'
+
         self.regions = None
         self.region_names = {}
         p = os.path.join(static_dir, 'regions_1km.tif')
@@ -65,6 +81,11 @@ class Grid:
         out = np.full(self.shape, fill, dtype=np.float32)
         out[self.rows, self.cols] = v
         return out
+
+    def solar(self, tmax, tmin, doy):
+        """기온 → 한낮 최대 일사 (W m⁻²), Hargreaves–Samani"""
+        import indices as ix
+        return ix.solar_peak(tmax, tmin, self.lat, self.elev, self.krs, doy)
 
     def interpolate(self, stations, var):
         """stations: DataFrame(lat, lon, elev, <var>) → 격자 유효 칸 1D 배열"""
@@ -93,3 +114,8 @@ class Grid:
         if lapse:
             out = np.where(self.dem_ok, out - LAPSE * self.dem, out)   # 칸 고도로 되돌림 (DEM 없는 칸은 그대로)
         return out
+
+    def solar(self, tmax, tmin, doy):
+        """기온 → 한낮 최대 일사 (W m⁻²), Hargreaves–Samani"""
+        import indices as ix
+        return ix.solar_peak(tmax, tmin, self.lat, self.elev, self.krs, doy)

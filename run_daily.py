@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-매일 실행: 관측 수집 → 1km 보간 → 종별 활동창 → 종별 CSI·CWRI·BAI_E → 7일 Gi* → 30일 중첩일수 → 출력
+매일 실행: 관측 수집 → 1km 보간 → 5종 활동창 → 종별 CSI·CWRI·BAI_E → 7일 Gi* → 30일 중첩일수 → 출력
+지수 정의는 말벌 논문 2와 같음 (indices.py, tests/golden/test_golden.py)
 
   python run_daily.py                    # 어제(KST) 기준
   python run_daily.py --date 2026-09-23  # 특정 날짜
@@ -12,6 +13,7 @@
 """
 import os
 import json
+import time
 import argparse
 import datetime as dt
 import numpy as np
@@ -44,6 +46,47 @@ def pick(g, var):
         return g
     return g[g['source'] != 'amos']
 NATIONAL_STAGES = [(70, '심각'), (40, '경계'), (10, '주의'), (0, '관심')]   # 주의 이상 면적(%) 기준
+RUNLOG = os.path.join(ROOT, 'data', 'archive', 'runlog.csv')          # 시범 운영 지표용 매일 실행 기록
+EXPOSURE = os.path.join(ROOT, 'data', 'static', 'beekeepers_sgg.csv')  # 양봉 농가 수 (정보공개청구 자료가 오면 채움)
+HAZARD_HIGH_PCT = 50.0      # 위해 높음 = 시군구 면적 중 '주의 이상'(7일 평균 CWRI ≥ τ) 비율 ≥ 50%
+
+
+def exposure_table(summ):
+    """위해–노출 2차원 분류 (곱하지 않음 — 논문 2의 위해·노출 분리 원칙).
+    위해 = 주의 이상 면적 비율, 노출 = 양봉 농가 수(있으면 봉군 수도 함께 표시). 노출 높음 = 자료 있는 시군구 중앙값 이상."""
+    if not os.path.exists(EXPOSURE):
+        return None, '노출 자료 파일 없음'
+    ex = pd.read_csv(EXPOSURE, encoding='utf-8-sig')
+    ex = ex[pd.to_numeric(ex['farms'], errors='coerce').notna()]
+    if ex.empty:
+        return None, '양봉 농가 수 자료 대기 중 (정보공개청구)'
+    ex['farms'] = ex['farms'].astype(float)
+    med = float(ex['farms'].median())
+    by = ex.set_index('code')
+    rows = []
+    for s in summ:
+        if s['code'] not in by.index:
+            continue
+        f = float(by.at[s['code'], 'farms']); col = by.at[s['code'], 'colonies'] if 'colonies' in by.columns else None
+        hz, xp = s['pct_caution'] >= HAZARD_HIGH_PCT, f >= med
+        cls = '둘 다 높음' if hz and xp else '위해만 높음' if hz else '노출만 높음' if xp else '둘 다 낮음'
+        rows.append({'code': s['code'], 'region': s['region'], 'pct_caution': s['pct_caution'], 'farms': int(f),
+                     'colonies': None if col is None or pd.isna(col) else int(col), 'class': cls})
+    order = {'둘 다 높음': 0, '위해만 높음': 1, '노출만 높음': 2, '둘 다 낮음': 3}
+    rows.sort(key=lambda x: (order[x['class']], -x['pct_caution'], -x['farms']))
+    return {'hazard_rule': f'주의 이상 면적 ≥ {HAZARD_HIGH_PCT:.0f}%', 'exposure_rule': f'양봉 농가 수 ≥ 중앙값 {med:.0f}',
+            'source': str(ex['source'].dropna().iloc[0]) if 'source' in ex.columns and ex['source'].notna().any() else '',
+            'rows': rows}, f'노출층: 시군구 {len(rows)}곳'
+
+
+def append_runlog(rec):
+    os.makedirs(os.path.dirname(RUNLOG), exist_ok=True)
+    df = pd.DataFrame([rec])
+    if os.path.exists(RUNLOG):
+        old = pd.read_csv(RUNLOG, dtype=str)
+        old = old[old['date'] != rec['date']]          # 같은 날을 다시 돌리면 마지막 것만
+        df = pd.concat([old, df.astype(str)], ignore_index=True)
+    df.sort_values('date').to_csv(RUNLOG, index=False)
 
 
 def load_breakpoints():
@@ -170,6 +213,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--date'); ap.add_argument('--no-fetch', action='store_true')
     a = ap.parse_args()
+    t_start = time.time()
     day = dt.datetime.strptime(a.date, '%Y-%m-%d').date() if a.date else kst_yesterday()
     logs, warns = [], []
     log = lambda s: (print(s), logs.append(s))
@@ -199,6 +243,7 @@ def main():
     if gaps:
         warns.append(f'1월 1일 이후 관측 없는 날 {gaps}일 (앞날 값으로 대체)')
     windows = ix.phenology_windows(tstack, doys)
+    window = ix.activity_window(windows)                     # 5종 합친 활동창 (창 밖 CWRI = 0)
 
     # 3) 최근 30일 지수 ----------------------------------------------------
     cw_hist, cw_days, overlap_days, n_st_today = [], [], np.zeros(grid.n), 0
@@ -209,14 +254,14 @@ def main():
             continue
         wx = {v: grid.interpolate(pick(g, v), v) for v in VARS}
         tx = np.maximum(wx['tmax'], wx['tmin'])              # 보간 뒤 최고<최저 역전 방지
-        solar = ix.solar_from_temp(wx['tavg'], tx, wx['tmin'])
+        doy = d.timetuple().tm_yday
+        solar = grid.solar(tx, wx['tmin'], doy)                # Hargreaves → 한낮 최대 일사 W m⁻²
         for v in ('rh', 'ws', 'rain'):
             if np.all(np.isnan(wx[v])):
                 warns.append(f'{d} {v} 자료 없음')
         w = {'t': wx['tavg'], 'tx': tx, 'tn': wx['tmin'], 'rh': wx['rh'], 'ws': wx['ws'],
              'pr': np.nan_to_num(wx['rain'], nan=0.0), 'srW': solar}
-        doy = d.timetuple().tm_yday
-        cwri, per = ix.compute_cwri(w, windows, doy)
+        cwri, per = ix.compute_cwri(w, window, doy)
         bai = ix.compute_bai_e(w['t'], w['rh'], w['ws'], w['pr'], w['srW'])
         overlap_days += ((cwri > ix.TAU_WASP) & (bai > ix.TAU_BEE)).astype(float)
         cw_hist.append(cwri); cw_days.append(d)
@@ -231,17 +276,17 @@ def main():
     gcls = ix.classify_hotspot(z)
     zc = z[grid.rows, grid.cols]
     # 공개용 경보 3단계 — 미국 산불위험등급(NFDRS)처럼 과거 지수 분포의 백분위수로 단계 경계를 정함
-    #   1 주의: 7일 평균 CWRI ≥ τ_wasp 37.76 (논문 2 확정값, 고정)
-    #   2 경계: ≥ P90 (breakpoints.json 의 "use" 분포, 기본 권장 7day)
+    #   1 주의: 7일 평균 CWRI ≥ τ_wasp 44.905 (논문 2, 고정)
+    #   2 경계: ≥ P90 (breakpoints.json 의 "use" 분포, 7일 평균)
     #   3 심각: ≥ P97
-    #   경계값: data/static/breakpoints.json (compute_breakpoints.py, τ_wasp와 같은 표본)
+    #   경계값: data/static/breakpoints.json (build_climatology.py breakpoints — 새 지수 평년, τ와 같은 규칙의 표본)
     #   상습 지역(계절 Gi* 지속성 ≥ 7/8년)은 단계와 분리해 빗금 층(chronic)으로 따로 표시
     bp = load_breakpoints()
     t1 = ix.TAU_WASP                    # 주의는 논문 2 확정값으로 고정 (breakpoints의 P75와 무관)
     t2 = bp['p90'] if bp else np.inf
     t3 = bp['p97'] if bp else np.inf
     if bp is None:
-        warns.append('breakpoints.json 없음 → 경계·심각 단계 꺼짐 (compute_breakpoints.py 실행 필요)')
+        warns.append('breakpoints.json 없음 → 경계·심각 단계 꺼짐 (build_climatology.py breakpoints 실행 필요)')
     alert_1d = (cw7 >= t1).astype(np.int8) + (cw7 >= t2).astype(np.int8) + (cw7 >= t3).astype(np.int8)
     alert = grid.to_2d(alert_1d.astype('float32'), fill=-9).astype(np.int8)
 
@@ -281,13 +326,18 @@ def main():
 
     summ = export.region_summary(grid, {
         'cwri': today['cwri'], 'cwri7': cw7, 'baie': today['bai'], 'overlap30': overlap_days,
-        'pct_hot': (zc > 1.96).astype(float), 'pct_alert': (ac >= 2).astype(float), 'pct_chronic': chronic_1d.astype(float), 'pct_wasp_active': (today['cwri'] > ix.TAU_WASP).astype(float),
+        'pct_hot': (zc > 1.96).astype(float), 'pct_caution': (ac >= 1).astype(float), 'pct_alert': (ac >= 2).astype(float), 'pct_chronic': chronic_1d.astype(float), 'pct_wasp_active': (today['cwri'] > ix.TAU_WASP).astype(float),
         **{f'csi_{sp}': today['per'][sp] for sp in ix.SPECIES}})
     if summ:
         pd.DataFrame(summ).to_csv(os.path.join(LATEST, 'regions.csv'), index=False, encoding='utf-8-sig')
         arch = os.path.join(ROOT, 'data', 'archive', str(day.year)); os.makedirs(arch, exist_ok=True)
         pd.DataFrame(summ).assign(date=day.isoformat()).to_csv(
             os.path.join(arch, f'regions_{day.isoformat()}.csv'), index=False, encoding='utf-8-sig')
+
+    expo, expo_msg = exposure_table(summ) if summ else (None, '지역 요약 없음')
+    with open(os.path.join(LATEST, 'exposure.json'), 'w', encoding='utf-8') as f:
+        json.dump(expo or {'rows': [], 'status': expo_msg}, f, ensure_ascii=False, separators=(',', ':'))
+    log('  ' + expo_msg)
 
     # 5) 상식 점검 — 지수가 터무니없는지 스스로 확인 --------------------------
     cw = today['cwri']
@@ -298,6 +348,7 @@ def main():
         med = float(np.nanmedian(e)) if np.any(~np.isnan(e)) else None
         ref = ix.PHENOLOGY_PARAMS[sp]['mean_emerge_doy']
         pheno[sp] = {'ko': ix.SPECIES_KO[sp], 'emerge_doy_median': med, 'ref_emerge_doy_jeonju': ref,
+                     'sci': ix.SPECIES_SCI[sp], 'term_doy_median': float(np.nanmedian(windows[sp][1])),
                      'pct_active_today': round(float(ix.active_mask(windows[sp], doys[-1]).mean() * 100), 1),
                      'csi_mean_today': round(float(np.nanmean(today['per'][sp])), 1)}
         if med is not None and abs(med - ref) > 30:
@@ -331,13 +382,17 @@ def main():
         'breakpoints': {'use': bp['use'] if bp else None, 'caution': round(float(t1), 2),
                         'warning': None if not bp else bp['p90'], 'severe': None if not bp else bp['p97'],
                         'sample': bp['sample'] if bp else None},
-        'solar_method': 'Solar = -16.357*Tavg + 27.847*Tmax + 25.657*Tgap - 67.734 (낮 8시간 평균 W/m²)',
-        'solar_csi_unit': 'MJ/m²' if ix.SOLAR_CSI_MJ else 'W/m² (논문과 동일)',
+        'solar_method': 'Hargreaves–Samani Rs (FAO-56 식 50, 맑은 날 상한) → 한낮 최대 일사 π·Rs/(2N), W m⁻²; ' + grid.krs_source,
+        'index_definition': '논문 2: CWRI = 0.35 vel + 0.25 man + 0.20 cra + 0.12 V. analis(좀말벌) + 0.08 V. ducalis(꼬마장수말벌), 경쟁항 없음',
+        'activity_window': {'rule': '5종 적산온도 최조 출현 ~ 최만 종료(200일 이후 기준온도 아래 5일 연속), 창 밖 CWRI 0',
+                            'start_doy_median': float(np.nanmedian(window[0])) if np.any(~np.isnan(window[0])) else None,
+                            'end_doy_median': float(np.nanmedian(window[1])),
+                            'pct_cells_open_today': round(float(ix.active_mask(window, doys[-1]).mean() * 100), 1)},
         'phenology': pheno,
         'layers': {k: f'{k}.png' for k in list(layers) + ['gi_class', 'alert', 'chronic']},
-        'alert_rule': '7일 평균 CWRI: 주의 ≥ τ_wasp 37.76(논문 2) / 경계 ≥ P90 / 심각 ≥ P97 (과거 2008~2024 가을 7일 평균 분포). 상습 지역(계절 지속성 ≥ 7/8년)은 별도 빗금. 전국 단계는 주의 이상 면적 10/40/70%',
+        'alert_rule': f'7일 평균 CWRI: 주의 ≥ τ_wasp {ix.TAU_WASP}(논문 2) / 경계 ≥ P90 / 심각 ≥ P97 ({bp["sample"] if bp else "기준 없음"}). 상습 지역(계절 Gi* 지속성 ≥ 7/8년, 2017–2024)은 별도 빗금. 전국 단계는 주의 이상 면적 10/40/70%',
         'warnings': warns, 'log': logs[-30:],
-        'label': '운영 지수 — 논문 검증 설정과 다름, 신고 자료로 검증 중',
+        'label': '운영 지수 — 논문 2 지수 정의(골든 테스트 통과)를 관측소 보간 격자에 적용, 신고 자료로 검증 중',
     }
     with open(os.path.join(LATEST, 'meta.json'), 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
@@ -347,6 +402,14 @@ def main():
     except Exception as e:
         warns.append(f'우리 지역 자료를 만들지 못함: {e.__class__.__name__}: {e}')
     publish(day)
+    g_today = obs[obs['date'] == day.strftime('%Y-%m-%d')]
+    g_today = pick(g_today, 'ws') if len(g_today) else g_today
+    append_runlog({
+        'date': day.isoformat(), 'run_utc': meta['generated_utc'], 'elapsed_s': round(time.time() - t_start, 1),
+        'n_stations': int(n_st_today), 'status': 'ok',
+        **{f'missing_{v}': round(float(g_today[v].isna().mean() * 100), 1) if len(g_today) else '' for v in VARS},
+        'gap_days_since_jan1': int(gaps), 'n_warnings': len(warns),
+        'pct_caution': meta['stats']['pct_alert_1'], 'national_stage': national})
     log(f'완료: CWRI 평균 {meta["stats"]["cwri_mean"]}, P75 {p75:.1f} (τ {ix.TAU_WASP}), '
         f'말벌 활동 칸 {meta["stats"]["pct_wasp_active"]}%, 핫스팟 {meta["stats"]["pct_hotspot_7d"]}%, '
         f'경보 주의 {meta["stats"]["pct_alert_1"]}% · 경계 {meta["stats"]["pct_alert"]}% · 심각 {meta["stats"]["pct_alert_3"]}% '

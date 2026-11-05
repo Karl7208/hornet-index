@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-지수 계산부 — Karl의 기존 코드를 그대로 옮긴 것 (새로 만든 식 없음)
+지수 계산부 — 말벌 논문 2(COMPAG 시스템 논문)의 정의를 따름. 기준 코드: tests/golden/paper_index_reference.py
+(같은 입력이면 같은 값: python tests/golden/test_golden.py)
 
-  CSI / CWRI      : 01_Wasp_Activity_Index_v3 (말벌_위험진단.html JS 포팅과 동일)
-  BAI_E           : 02_BAI_E_Raster_Pipeline compute_bai_e
-  적산온도 활동창  : wasp_phenology_model.py (F2_degree_day_params)
-  Gi*             : 06_PartA_Phenology_GiStar_EarlyWarning getis_ord_gi_star / classify_hotspot
-  임계값          : τ_wasp = 37.76, τ_bee = 30 (논문 2 확정값)
+  CSI_s  = 100 · 8개 반응함수의 곱 (평균·최고·최저기온, 일교차, 습도, 풍속, 강수, 일사)
+  CWRI   = 0.35·등검은말벌 + 0.25·장수말벌 + 0.20·말벌 + 0.12·좀말벌 + 0.08·꼬마장수말벌 (경쟁항 없음)
+  활동창 = 5종 적산온도 출현 중 가장 이른 날 ~ 종료 중 가장 늦은 날 (종료 = 200일 이후 기준온도 아래 5일 연속의 첫날),
+           창 밖은 CWRI 0
+  일사   = Hargreaves–Samani Rs (FAO-56 식 50, kRs 해안 0.19·내륙 0.16, 맑은 날 일사 상한)
+           → 한낮 최대 일사 π·Rs/(2N) (W m⁻²) 로 CSI·BAI_E에 넣음
+  BAI_E  = 02_BAI_E_Raster_Pipeline compute_bai_e
+  Gi*    = 06_PartA getis_ord_gi_star (7×7 칸, ±3 km)
+  임계값 : τ_wasp = 44.905 (1 km 한반도, 8–10월, CWRI > 0, 2017–2024의 P75), τ_bee = 30
 
+종 코드 키는 래스터 폴더 이름을 그대로 씀: V_simillima = 좀말벌 V. analis, V_analis = 꼬마장수말벌 V. ducalis.
 모든 함수는 numpy 배열을 받아 칸별로 계산한다 (1km 격자 전체를 한 번에).
 """
 import numpy as np
@@ -85,21 +91,56 @@ CWRI_WEIGHTS = {'V_velutina': 0.35, 'V_mandarinia': 0.25, 'V_crabro': 0.20,
 SPECIES = ['V_velutina', 'V_mandarinia', 'V_crabro', 'V_simillima', 'V_analis']
 SPECIES_KO = {'V_velutina': '등검은말벌', 'V_mandarinia': '장수말벌', 'V_crabro': '말벌',
               'V_simillima': '좀말벌', 'V_analis': '꼬마장수말벌'}
+SPECIES_SCI = {'V_velutina': 'Vespa velutina', 'V_mandarinia': 'Vespa mandarinia', 'V_crabro': 'Vespa crabro',
+               'V_simillima': 'Vespa analis', 'V_analis': 'Vespa ducalis'}      # 키 ≠ 학명 (래스터 폴더 이름 유지)
+NATIVE = ['V_mandarinia', 'V_crabro', 'V_simillima', 'V_analis']
 
-# 일사 경험식 (Karl, 기온 → 일사). 노트북 01·02와 같이 W/m² 규모 값을 CSI·BAI_E에 변환 없이 넣음
-def solar_from_temp(tavg, tmax, tmin):
-    tgap = tmax - tmin
-    return np.maximum(-16.357 * tavg + 27.847 * tmax + 25.657 * tgap - 67.734, 0.0)
+# ─────────────────────────────────────────────────────────────
+# 일사 — Hargreaves–Samani (FAO-56 식 21·34·37·50) → 한낮 최대 일사 (W m⁻²)
+# ─────────────────────────────────────────────────────────────
+KRS_COASTAL, KRS_INTERIOR = 0.19, 0.16        # FAO-56 기본값 (지점별 표: data/static/krs_stations.csv)
 
 
-# CSI의 일사 기준값(4~7)은 MJ/m²/일 규모. True로 두면 CSI에만 MJ로 환산해 넣음 (BAI_E는 W/m² 그대로)
-# 여기서 W/m² = 하루 일사량을 낮 8시간에 나눈 값 → MJ = W/m² ÷ 34.72 (전주 일자료 MJ·W 칸 비율로 확인)
-SOLAR_CSI_MJ = False
-W_PER_MJ = 1e6 / 28800.0   # 34.72
+def _solar_decl(doy):
+    return 0.409 * np.sin(2 * np.pi * doy / 365 - 1.39)
+
+
+def extraterrestrial(lat_deg, doy):
+    """대기 밖 일사 Ra (MJ m⁻² d⁻¹), FAO-56 식 21. lat·doy는 같은 모양으로 맞춰 줄 것."""
+    phi = np.radians(np.asarray(lat_deg, float))
+    J = np.asarray(doy, float)
+    dr = 1 + 0.033 * np.cos(2 * np.pi * J / 365)
+    dl = _solar_decl(J)
+    ws = np.arccos(np.clip(-np.tan(phi) * np.tan(dl), -1, 1))
+    return 24 * 60 / np.pi * 0.0820 * dr * (ws * np.sin(phi) * np.sin(dl) + np.cos(phi) * np.cos(dl) * np.sin(ws))
+
+
+def daylength(lat_deg, doy):
+    """낮 길이 N (시간), FAO-56 식 34"""
+    phi = np.radians(np.asarray(lat_deg, float))
+    return 24 / np.pi * np.arccos(np.clip(-np.tan(phi) * np.tan(_solar_decl(np.asarray(doy, float))), -1, 1))
+
+
+def hargreaves_rs(tmax, tmin, ra, krs, elev):
+    """하루 일사 Rs (MJ m⁻² d⁻¹), FAO-56 식 50, 맑은 날 일사 Rso(식 37)로 상한. 고도 결측은 해발 0."""
+    rs = np.asarray(krs, float) * np.sqrt(np.maximum(tmax - tmin, 0)) * ra
+    z = np.nan_to_num(np.asarray(elev, float), nan=0.0)
+    return np.minimum(rs, (0.75 + 2e-5 * z) * ra)
+
+
+def peak_wm2(rs_mj, lat_deg, doy):
+    """하루 일사(MJ) → 한낮 최대 일사 (반사인 일변화): π·Rs·10⁶ / (2·N·3600)"""
+    return np.pi * rs_mj * 1e6 / (2 * daylength(lat_deg, doy) * 3600)
+
+
+def solar_peak(tmax, tmin, lat_deg, elev, krs, doy):
+    """기온 → 한낮 최대 일사 (W m⁻²). CSI·BAI_E의 Solar 입력."""
+    ra = extraterrestrial(lat_deg, np.full(np.shape(lat_deg), doy) if np.isscalar(doy) else doy)
+    return peak_wm2(hargreaves_rs(tmax, tmin, ra, krs, elev), lat_deg, doy)
 
 
 # 임계값 (논문 2 확정값)
-TAU_WASP = 37.76
+TAU_WASP = 44.905      # 1 km 한반도, 8–10월, CWRI > 0, 2017–2024 P75
 TAU_BEE = 30.0
 
 # ─────────────────────────────────────────────────────────────
@@ -113,7 +154,7 @@ PHENOLOGY_PARAMS = {
     'V_simillima':  {'T_base': 3.0, 'R_h_emerge': 336.0, 'mean_emerge_doy': 99,  'mean_end_doy': 290},
 }
 N_CONSEC_TERMINATE = 5
-USE_TERMINATION = False   # 운영판: 가을 종료일 고려 안 함 (출현 후 연말까지 열어 두고 추위는 CSI가 반영)
+USE_TERMINATION = True    # 논문 2: 200일 이후 기준온도 아래 5일 연속이면 종료
 TERMINATE_SEARCH_START_DOY = 200
 
 
@@ -148,32 +189,42 @@ def phenology_windows(tavg_stack, doys):
     return out
 
 
+def activity_window(windows):
+    """5종 활동창 → 하나의 창 (가장 이른 출현, 가장 늦은 종료). 아무 종도 출현 전이면 NaN."""
+    e = np.vstack([np.where(np.isnan(windows[sp][0]), np.inf, windows[sp][0]) for sp in SPECIES]).min(axis=0)
+    t = np.vstack([windows[sp][1] for sp in SPECIES]).max(axis=0)          # 미종료 = 365 (논문 코드와 같음)
+    start = np.where(np.isfinite(e), e, np.nan)
+    return start, t
+
+
 def active_mask(window, doy):
-    emerge, term, _ = window
+    """window = (출현, 종료[, ...]) — 종별 창이든 합친 창이든 같은 규칙"""
+    emerge, term = window[0], window[1]
     return (~np.isnan(emerge)) & (doy >= emerge) & (doy <= term)
 
 # ─────────────────────────────────────────────────────────────
 # 4. CSI / CWRI
 # ─────────────────────────────────────────────────────────────
 def compute_csi(sp, wx):
-    """wx: dict of arrays t, tx, tn, rh, ws, pr, srW (W/m²). 반환 0~100"""
+    """wx: dict of arrays t, tx, tn, rh, ws, pr, srW (한낮 최대 일사 W m⁻²), 선택 tg(일교차). 반환 0~100"""
     P = SPECIES_PARAMS[sp]
-    solar = wx['srW'] / W_PER_MJ if SOLAR_CSI_MJ else wx['srW']
+    tgap = wx['tg'] if 'tg' in wx else wx['tx'] - wx['tn']
     m = {'temp': wx['t'], 'humid': wx['rh'], 'wind': wx['ws'], 'precip': wx['pr'],
-         'tmax': wx['tx'], 'tmin': wx['tn'], 'tgap': wx['tx'] - wx['tn'], 'solar': solar}
+         'tmax': wx['tx'], 'tmin': wx['tn'], 'tgap': tgap, 'solar': wx['srW']}
     prod = np.ones_like(wx['t'], dtype=np.float64)
     for key, par in P.items():
         prod *= response(m[key], par)
     return prod * 100.0
 
 
-def compute_cwri(wx, windows, doy):
-    """활동창 밖의 종은 0 → 가중합. 반환 (cwri, {sp: csi})"""
+def compute_cwri(wx, window, doy):
+    """window = activity_window(...) 의 (시작, 끝) — 창 밖은 CWRI·종별 CSI 모두 0. window=None이면 창 없이.
+    경쟁항 없음 (논문 1 R1: 등검은말벌의 토착종 억제 근거 없음). 반환 (cwri, {sp: csi})"""
+    act = active_mask(window, doy) if window is not None else np.ones(np.shape(wx['t']), bool)
     per = {}
     cwri = np.zeros_like(wx['t'], dtype=np.float64)
     for sp in SPECIES:
-        csi = compute_csi(sp, wx)
-        csi = np.where(active_mask(windows[sp], doy), csi, 0.0)
+        csi = np.where(act, compute_csi(sp, wx), 0.0)
         per[sp] = csi
         cwri += CWRI_WEIGHTS[sp] * csi
     cwri = np.where(np.isnan(wx['t']), np.nan, np.clip(cwri, 0, 100))
@@ -189,6 +240,7 @@ def _bell(x, opt, sL, sR):
 
 
 def compute_bai_e(T, RH, WS, Rain, SolarWm2):
+    """SolarWm2 = 한낮 최대 일사 (W m⁻²)"""
     g = (1 / (1 + np.exp((T - 40) / 1.25))) * (1 / (1 + np.exp(-(T - 5) / 0.75))) \
         * (1 / (1 + np.exp((Rain - 15) / 1.25))) * (1 / (1 + np.exp((WS - 10) / 0.5)))
     ti = _bell(T, 26.6, 7.82, 5.97)

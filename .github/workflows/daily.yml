@@ -33,6 +33,9 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
 
+      - name: 골든 테스트 (지수 코드 = 논문 2 기준 코드)
+        run: python tests/golden/test_golden.py
+
       - name: 관측 받기 + 지수 계산
         env:
           KMA_KEY: ${{ secrets.KMA_KEY }}
