@@ -260,7 +260,7 @@ def main():
             if np.all(np.isnan(wx[v])):
                 warns.append(f'{d} {v} 자료 없음')
         w = {'t': wx['tavg'], 'tx': tx, 'tn': wx['tmin'], 'rh': wx['rh'], 'ws': wx['ws'],
-             'pr': np.nan_to_num(wx['rain'], nan=0.0), 'srW': solar}
+             'pr': np.nan_to_num(wx['rain'], nan=0.0), 'srW': solar, 'N': ix.daylength(grid.lat, doy)}
         cwri, per = ix.compute_cwri(w, window, doy)
         bai = ix.compute_bai_e(w['t'], w['rh'], w['ws'], w['pr'], w['srW'])
         overlap_days += ((cwri > ix.TAU_WASP) & (bai > ix.TAU_BEE)).astype(float)

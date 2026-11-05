@@ -100,6 +100,18 @@ NATIVE = ['V_mandarinia', 'V_crabro', 'V_simillima', 'V_analis']
 # ─────────────────────────────────────────────────────────────
 KRS_COASTAL, KRS_INTERIOR = 0.19, 0.16        # FAO-56 기본값 (지점별 표: data/static/krs_stations.csv)
 
+# 종별 일사 반응함수의 기준값(threshold 4–7, k 0.25–0.4)은 하루 일사량 MJ m⁻² d⁻¹ 규모로 정해진 값.
+# 입력은 한낮 최대 일사(W m⁻²)라서 그대로 쓰면 반응값이 늘 1이 됨.
+# True: 기준값을 칸·날마다 같은 변환식으로 W m⁻²로 바꿈  thr_W = thr_MJ·f,  k_W = k_MJ / f,  f = π·10⁶ / (2·N·3600)
+#       (= Rs(MJ)를 넣는 것과 수학적으로 같음; N = 낮 길이, wx['N'] 필요)
+# False: 논문 2 제출 코드와 같음 (골든 테스트 기준). 논문 쪽에서 바꾸면 True로 바꾸고 골든 벡터를 새로 받을 것
+SOLAR_THRESHOLD_MJ = False
+
+
+def mj_to_peak_factor(N):
+    """하루 일사 1 MJ m⁻² d⁻¹ → 한낮 최대 W m⁻² (반사인 일변화). N=12시간이면 36.4"""
+    return np.pi * 1e6 / (2 * np.asarray(N, float) * 3600)
+
 
 def _solar_decl(doy):
     return 0.409 * np.sin(2 * np.pi * doy / 365 - 1.39)
@@ -213,6 +225,9 @@ def compute_csi(sp, wx):
          'tmax': wx['tx'], 'tmin': wx['tn'], 'tgap': tgap, 'solar': wx['srW']}
     prod = np.ones_like(wx['t'], dtype=np.float64)
     for key, par in P.items():
+        if key == 'solar' and SOLAR_THRESHOLD_MJ:              # 기준값 MJ d⁻¹ → W m⁻² (칸·날마다)
+            f = mj_to_peak_factor(wx['N'])
+            par = {**par, 'threshold': par['threshold'] * f, 'k': par['k'] / f}
         prod *= response(m[key], par)
     return prod * 100.0
 
