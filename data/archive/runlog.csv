@@ -1,3 +1,3 @@
 date,run_utc,elapsed_s,n_stations,status,missing_tavg,missing_tmax,missing_tmin,missing_rh,missing_ws,missing_rain,gap_days_since_jan1,n_warnings,pct_caution,national_stage
 2026-11-04,2026-11-05T13:55:29+00:00,33.8,739,ok,0.8,0.0,0.0,3.1,2.8,1.9,0,0,0.0,관심
-2026-11-05,2026-11-06T10:53:03+00:00,40.5,739,ok,1.2,0.0,0.0,3.5,1.8,2.2,0,0,0.0,관심
+2026-11-05,2026-11-06T13:47:58+00:00,33.7,739,ok,1.2,0.0,0.0,3.5,1.8,2.2,0,0,0.0,관심
