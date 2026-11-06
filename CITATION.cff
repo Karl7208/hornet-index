@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it and the accompanying paper."
+title: "hornet-index: daily 1-km hornet activity index service for South Korea"
+type: software
+authors:
+  - family-names: Min
+    given-names: Sung-Hyun
+    affiliation: "Apiculture Division, National Institute of Agricultural Sciences, Rural Development Administration, Republic of Korea"
+repository-code: "https://github.com/Karl7208/hornet-index"
+url: "https://karl7208.github.io/hornet-index/"
+keywords:
+  - Vespa velutina
+  - hornet
+  - honeybee
+  - decision support system
+  - Getis-Ord Gi*
+  - GitHub Actions
+abstract: >-
+  Operational service that downloads daily station observations from the KMA API Hub,
+  interpolates them to a 1-km grid of South Korea and computes species climate suitability
+  (CSI) for five Vespa species, the Composite Wasp Risk Index (CWRI), the honeybee exit-activity
+  index (BAI_E), degree-day activity windows and Getis-Ord Gi* hotspots, using the same index
+  definitions as the paper code (verified by golden test vectors). Results are published daily
+  as a static web map (national, staff) and district pages (citizens).

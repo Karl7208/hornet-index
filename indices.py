@@ -4,14 +4,14 @@
 (같은 입력이면 같은 값: python tests/golden/test_golden.py)
 
   CSI_s  = 100 · 8개 반응함수의 곱 (평균·최고·최저기온, 일교차, 습도, 풍속, 강수, 일사)
-  CWRI   = 0.35·등검은말벌 + 0.25·장수말벌 + 0.20·말벌 + 0.12·좀말벌 + 0.08·꼬마장수말벌 (경쟁항 없음)
+  CWRI   = (5·등검은말벌 + 4·장수말벌 + 3·말벌 + 2·꼬마장수말벌 + 1·좀말벌) / 15 (경쟁항 없음)
   활동창 = 5종 적산온도 출현 중 가장 이른 날 ~ 종료 중 가장 늦은 날 (종료 = 200일 이후 기준온도 아래 5일 연속의 첫날),
            창 밖은 CWRI 0
   일사   = Hargreaves–Samani Rs (FAO-56 식 50, kRs 해안 0.19·내륙 0.16, 맑은 날 일사 상한)
-           → 한낮 최대 일사 π·Rs/(2N) (W m⁻²) 로 CSI·BAI_E에 넣음
+           → 한낮 최대 일사 π·Rs/(2N) (W m⁻²) 로 CSI·BAI_E에 넣음. CSI 일사 기준값(MJ d⁻¹)은 같은 식으로 W m⁻²로 바꿔 씀
   BAI_E  = 02_BAI_E_Raster_Pipeline compute_bai_e
   Gi*    = 06_PartA getis_ord_gi_star (7×7 칸, ±3 km)
-  임계값 : τ_wasp = 44.905 (1 km 한반도, 8–10월, CWRI > 0, 2017–2024의 P75), τ_bee = 30
+  임계값 : τ_wasp = 44.354 (1 km 한반도, 8–10월, CWRI > 0, 2017–2024의 P75; v4 가중치·경쟁항 없음·일사 MJ 기준), τ_bee = 30
 
 종 코드 키는 래스터 폴더 이름을 그대로 씀: V_simillima = 좀말벌 V. analis, V_analis = 꼬마장수말벌 V. ducalis.
 모든 함수는 numpy 배열을 받아 칸별로 계산한다 (1km 격자 전체를 한 번에).
@@ -86,8 +86,9 @@ SPECIES_PARAMS = {
                      'tgap': {'type': 'gauss', 'opt': 12.0, 'sigma': 6.0},
                      'solar': {'type': 'sigmoid_pos', 'threshold': 4.0, 'k': 0.25}},
 }
-CWRI_WEIGHTS = {'V_velutina': 0.35, 'V_mandarinia': 0.25, 'V_crabro': 0.20,
-                'V_simillima': 0.12, 'V_analis': 0.08}
+# 논문 2 본 분석 v4 (2026-11-06): 등검은 5/15, 장수 4/15, 말벌 3/15, 꼬마장수(V_analis 키) 2/15, 좀말벌(V_simillima 키) 1/15
+CWRI_WEIGHTS = {'V_velutina': 5 / 15, 'V_mandarinia': 4 / 15, 'V_crabro': 3 / 15,
+                'V_analis': 2 / 15, 'V_simillima': 1 / 15}
 SPECIES = ['V_velutina', 'V_mandarinia', 'V_crabro', 'V_simillima', 'V_analis']
 SPECIES_KO = {'V_velutina': '등검은말벌', 'V_mandarinia': '장수말벌', 'V_crabro': '말벌',
               'V_simillima': '좀말벌', 'V_analis': '꼬마장수말벌'}
@@ -104,8 +105,8 @@ KRS_COASTAL, KRS_INTERIOR = 0.19, 0.16        # FAO-56 기본값 (지점별 표:
 # 입력은 한낮 최대 일사(W m⁻²)라서 그대로 쓰면 반응값이 늘 1이 됨.
 # True: 기준값을 칸·날마다 같은 변환식으로 W m⁻²로 바꿈  thr_W = thr_MJ·f,  k_W = k_MJ / f,  f = π·10⁶ / (2·N·3600)
 #       (= Rs(MJ)를 넣는 것과 수학적으로 같음; N = 낮 길이, wx['N'] 필요)
-# False: 논문 2 제출 코드와 같음 (골든 테스트 기준). 논문 쪽에서 바꾸면 True로 바꾸고 골든 벡터를 새로 받을 것
-SOLAR_THRESHOLD_MJ = False
+# 논문 2 본 분석으로 확정 (2026-11-06). False = 예전(포화) 정의, 골든 v1 비교용
+SOLAR_THRESHOLD_MJ = True
 
 
 def mj_to_peak_factor(N):
@@ -152,7 +153,7 @@ def solar_peak(tmax, tmin, lat_deg, elev, krs, doy):
 
 
 # 임계값 (논문 2 확정값)
-TAU_WASP = 44.905      # 1 km 한반도, 8–10월, CWRI > 0, 2017–2024 P75
+TAU_WASP = 44.354      # 1 km 한반도, 8–10월, CWRI > 0, 2017–2024 P75 (논문 2 v4: 가중치 5:4:3:2:1/15, 일사 MJ 기준)
 TAU_BEE = 30.0
 
 # ─────────────────────────────────────────────────────────────

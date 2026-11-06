@@ -276,7 +276,7 @@ def main():
     gcls = ix.classify_hotspot(z)
     zc = z[grid.rows, grid.cols]
     # 공개용 경보 3단계 — 미국 산불위험등급(NFDRS)처럼 과거 지수 분포의 백분위수로 단계 경계를 정함
-    #   1 주의: 7일 평균 CWRI ≥ τ_wasp 44.905 (논문 2, 고정)
+    #   1 주의: 7일 평균 CWRI ≥ τ_wasp 44.354 (논문 2 v4, 고정)
     #   2 경계: ≥ P90 (breakpoints.json 의 "use" 분포, 7일 평균)
     #   3 심각: ≥ P97
     #   경계값: data/static/breakpoints.json (build_climatology.py breakpoints — 새 지수 평년, τ와 같은 규칙의 표본)
@@ -383,7 +383,7 @@ def main():
                         'warning': None if not bp else bp['p90'], 'severe': None if not bp else bp['p97'],
                         'sample': bp['sample'] if bp else None},
         'solar_method': 'Hargreaves–Samani Rs (FAO-56 식 50, 맑은 날 상한) → 한낮 최대 일사 π·Rs/(2N), W m⁻²; ' + grid.krs_source,
-        'index_definition': '논문 2: CWRI = 0.35 vel + 0.25 man + 0.20 cra + 0.12 V. analis(좀말벌) + 0.08 V. ducalis(꼬마장수말벌), 경쟁항 없음',
+        'index_definition': '논문 2 v4: CWRI = (5 vel + 4 man + 3 cra + 2 V. ducalis(꼬마장수말벌) + 1 V. analis(좀말벌)) / 15, 경쟁항 없음, CSI 일사 기준값 MJ d⁻¹ → W m⁻² 변환' if ix.SOLAR_THRESHOLD_MJ else '논문 2 (일사 기준값 변환 꺼짐)',
         'activity_window': {'rule': '5종 적산온도 최조 출현 ~ 최만 종료(200일 이후 기준온도 아래 5일 연속), 창 밖 CWRI 0',
                             'start_doy_median': float(np.nanmedian(window[0])) if np.any(~np.isnan(window[0])) else None,
                             'end_doy_median': float(np.nanmedian(window[1])),

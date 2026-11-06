@@ -1,3 +1,13 @@
+# hornet-index — daily 1-km hornet activity index (South Korea)
+
+**English summary.** Every day at 06:30 KST a GitHub Actions workflow downloads the previous day's station observations from the KMA API Hub (AWS + ASOS, about 730 stations), interpolates them to a 1-km grid with elevation correction, and computes the paper's indices: species climate suitability (CSI) for five *Vespa* species, the Composite Wasp Risk Index (CWRI = (5·V. velutina + 4·V. mandarinia + 3·V. crabro + 2·V. ducalis + 1·V. analis)/15, no competition term), the honeybee exit-activity index (BAI_E), degree-day activity windows, 7-day Getis–Ord Gi* hotspots and wasp–bee overlap days. Alert levels: caution ≥ τ_wasp = 44.354 (7-day CWRI), warning/severe = P90/P97 of the 7-day CWRI climatology (1991–2020; interim values from 2026 operational data until that run is uploaded). Solar radiation is estimated with Hargreaves–Samani (FAO-56; kRs 0.19 coastal / 0.16 inland) and enters CSI with MJ-based thresholds converted to midday-peak W m⁻². The code is checked daily against golden test vectors from the paper code (`tests/golden/test_golden.py`).
+
+- National map (staff): https://karl7208.github.io/hornet-index/ (`?lang=en`) · District view (citizens): https://karl7208.github.io/hornet-index/local.html
+- Run: `pip install -r requirements.txt`, set `KMA_KEY`, `python run_daily.py` (or `--no-fetch --date YYYY-MM-DD` with the archived observations). Climatology and thresholds: `build_climatology.py`.
+- **Cite:** Min, S.-H., Kim, M.-H., Kim, J.-N., Lee, Y.-B., Lee, K.-Y., Kim, S.-B. An operational hornet-risk system for apiculture and public safety: climate-driven Gi* hotspot forecasting, citizen reporting and CMIP6 projections in South Korea. *Computers and Electronics in Agriculture* (submitted). See `CITATION.cff`.
+
+---
+
 # 말벌 활동 지수 (hornet-index)
 
 매일 06:30(KST) GitHub Actions가 기상청 API허브에서 전날 관측(AWS 전 지점, ASOS 포함 약 730곳)을 받아
@@ -10,11 +20,11 @@
 ## 지수 정의 (논문 2와 같음)
 | 항목 | 정의 |
 |---|---|
-| CSI | 종마다 8개 반응함수의 곱 × 100 |
-| CWRI | 0.35·등검은말벌 *V. velutina* + 0.25·장수말벌 *V. mandarinia* + 0.20·말벌 *V. crabro* + 0.12·좀말벌 *V. analis* + 0.08·꼬마장수말벌 *V. ducalis*, **경쟁항 없음** |
+| CSI | 종마다 8개 반응함수의 곱 × 100. 일사 반응 기준값(MJ m⁻² d⁻¹)은 칸·날마다 f = π·10⁶/(2N·3600)으로 W m⁻²로 바꿔 씀 |
+| CWRI | (5·등검은말벌 *V. velutina* + 4·장수말벌 *V. mandarinia* + 3·말벌 *V. crabro* + 2·꼬마장수말벌 *V. ducalis* + 1·좀말벌 *V. analis*) / 15, **경쟁항 없음** |
 | 활동창 | 5종 적산온도 출현 중 가장 이른 날 ~ 종료 중 가장 늦은 날(200일 이후 기준온도 아래 5일 연속의 첫날), 창 밖 CWRI = 0 |
 | 일사 | Hargreaves–Samani Rs(FAO-56 식 50, 맑은 날 상한) → 한낮 최대 일사 π·Rs/(2N), W m⁻². kRs = FAO 기본값(해안 0.19, 내륙 0.16; 바다에서 10 km 이내 = 해안), 칸마다 가장 가까운 지점 값 (`data/static/krs_stations.csv`) |
-| τ_wasp (주의) | 44.905 = 1 km 한반도, 8–10월, CWRI > 0, 2017–2024의 75번째 백분위 |
+| τ_wasp (주의) | 44.354 = 1 km 한반도, 8–10월, CWRI > 0, 2017–2024의 75번째 백분위 (v4 가중치, 경쟁항 없음, 일사 MJ 기준) |
 | 경계·심각 | 새 지수 평년의 7일 평균 CWRI P90·P97 (`data/static/breakpoints.json`) |
 | 상습 지역 | 계절 Gi*(7×7 칸, ±3 km) z > 1.96 이었던 해의 비율 ≥ 0.87 (2017–2024, 논문 2 래스터) |
 
