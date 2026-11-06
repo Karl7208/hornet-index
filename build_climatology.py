@@ -30,6 +30,7 @@ import sys
 import argparse
 import datetime as dt
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -81,7 +82,9 @@ def year_core(year, obs, out_tag=''):
         bai = ix.compute_bai_e(w['t'], w['rh'], w['ws'], w['pr'], w['srW'])
         recent = (recent + [cw])[-7:]
         if d.month in SAMPLE_MONTHS and len(recent) >= 5:
-            c7 = np.nanmean(np.vstack(recent), axis=0)
+            with warnings.catch_warnings():                  # 7일 모두 빈 칸(섬 등)은 NaN으로 두고 경고는 숨김
+                warnings.simplefilter('ignore', RuntimeWarning)
+                c7 = np.nanmean(np.vstack(recent), axis=0)
             idx = rng.choice(grid.n, size=min(SAMPLE_PER_DAY, grid.n), replace=False)
             samp['doy'].append(np.full(idx.size, doy, np.int16))
             samp['cwri'].append(cw[idx].astype(np.float32)); samp['cwri7'].append(c7[idx].astype(np.float32))
