@@ -308,3 +308,14 @@ def classify_hotspot(z):
     c[z < -1.96] = -1
     c[np.isnan(z)] = -9
     return c
+
+
+# ─────────────────────────────────────────────────────────────
+# 2주 전망 (시군구 7일 평균 CWRI) — data/static/outlook.json 의 decay·days
+# ─────────────────────────────────────────────────────────────
+def outlook(cw7_today, clim_today, clim_future, decay=0.8):
+    """오늘 평년 편차가 하루에 decay 배씩 줄어 평년으로 돌아감.
+    clim_future[k-1] = k일 뒤 평년(7일 평균 CWRI) → [k일 뒤 전망], 0–100으로 자름"""
+    a0 = cw7_today - clim_today
+    k = np.arange(1, len(clim_future) + 1)
+    return np.clip(np.asarray(clim_future, float) + a0 * decay ** k, 0, 100)

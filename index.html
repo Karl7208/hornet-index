@@ -101,7 +101,7 @@ const EN = {
   '겹친 날 평균 (30일)': 'Mean overlap days (30 d)', '평균기온 중앙값': 'Median mean temperature',
   '관심': 'Low', '주의': 'Caution', '경계': 'Warning', '심각': 'Severe',
   '지역': 'District', '7일 지수': '7-day CWRI', '경계↑': '≥Warning', '겹친 날': 'Overlap d',
-  '최신': 'Latest', '불러오는 중…': 'Loading…', '{d} 관측 기준, 관측소 {n}곳': 'Observed {d}, {n} stations',
+  '최신': 'Latest', '갱신 지연': 'Update delayed', '불러오는 중…': 'Loading…', '{d} 관측 기준, 관측소 {n}곳': 'Observed {d}, {n} stations',
   '아직 계산 결과가 없습니다. run_daily.py 를 먼저 실행해 주세요.': 'No results yet. Run run_daily.py first.',
   '운영 메모 {n}건 (한국어)': '{n} operator notes (Korean)',
   '주의 이상 면적': 'Area ≥ caution', '농가 수': 'Farms', '봉군 수': 'Colonies', '분류': 'Class',
@@ -181,12 +181,21 @@ function drawChronic(){
   }
 }
 
+
+// 갱신 지연: 정오(KST) 이후인데 어제 자료가 아니면 (아침에는 그제 자료가 정상)
+function staleNote(dateStr){
+  const now = new Date(Date.now() + 9 * 36e5);                     // KST
+  const back = now.getUTCHours() >= 12 ? 1 : 2;
+  const expect = new Date(now.getTime() - back * 864e5).toISOString().slice(0, 10);
+  return dateStr && dateStr < expect;
+}
 async function load(base){
   BASE = base;
   try {
     const m = await (await fetch(BASE + 'meta.json' + bust())).json();
     meta = m;
     document.getElementById('dateLine').textContent = T('{d} 관측 기준, 관측소 {n}곳', { d: m.date, n: m.n_stations_today });
+    if (base === 'data/latest/' && staleNote(m.date)) document.getElementById('dateLine').insertAdjacentHTML('afterend', `<span style="margin-left:8px;padding:1px 8px;border-radius:999px;background:#fde68a;color:#7c2d12;font-weight:600">${esc(T('갱신 지연'))}</span>`);
     const s = m.stats;
     document.getElementById('stats').innerHTML = [
       ['전국 단계', T(m.national_stage || '-')],

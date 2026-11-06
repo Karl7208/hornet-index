@@ -79,14 +79,34 @@ def exposure_table(summ):
             'rows': rows}, f'노출층: 시군구 {len(rows)}곳'
 
 
+def gh_output(**kv):
+    """GitHub Actions 다음 단계에 값 넘기기 (deploy=0 이면 지도 배포를 건너뜀 → 전날 지도 유지)"""
+    f = os.environ.get('GITHUB_OUTPUT')
+    if f:
+        with open(f, 'a') as o:
+            for k, v in kv.items():
+                o.write(f'{k}={v}\n')
+
+
+def done_today(day):
+    if not os.path.exists(RUNLOG):
+        return False
+    r = pd.read_csv(RUNLOG, dtype=str)
+    return bool(((r['date'] == day.isoformat()) & (r['status'] == 'ok')).any())
+
+
+def run_meta():
+    return {'trigger': os.environ.get('GITHUB_EVENT_NAME', 'local'), 'schedule': os.environ.get('RUN_SCHEDULE', ''),
+            'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', '')}
+
+
 def append_runlog(rec):
     os.makedirs(os.path.dirname(RUNLOG), exist_ok=True)
     df = pd.DataFrame([rec])
     if os.path.exists(RUNLOG):
-        old = pd.read_csv(RUNLOG, dtype=str)
-        old = old[old['date'] != rec['date']]          # 같은 날을 다시 돌리면 마지막 것만
+        old = pd.read_csv(RUNLOG, dtype=str)            # 시도마다 한 줄 (실패·덜 됨 포함) — 성공률은 날짜 기준으로 셈
         df = pd.concat([old, df.astype(str)], ignore_index=True)
-    df.sort_values('date').to_csv(RUNLOG, index=False)
+    df.sort_values(['date'], kind='stable').to_csv(RUNLOG, index=False)
 
 
 def load_breakpoints():
@@ -115,8 +135,10 @@ def kst_yesterday():
 
 
 CLIM = os.path.join(ROOT, 'data', 'static', 'climatology_sgg.csv')
-OUTLOOK_DAYS = 14
-ANOMALY_DECAY = 0.8          # 오늘의 평년 대비 차이가 하루에 20%씩 줄어 평년으로 수렴 (지속 예보)
+_OL = json.load(open(os.path.join(ROOT, 'data', 'static', 'outlook.json'), encoding='utf-8')) \
+    if os.path.exists(os.path.join(ROOT, 'data', 'static', 'outlook.json')) else {}
+OUTLOOK_DAYS = int(_OL.get('days', 14))
+ANOMALY_DECAY = float(_OL.get('decay', 0.8))  # 오늘의 평년 대비 차이가 하루에 (1-decay)씩 줄어 평년으로 수렴 (지속 예보)
 
 
 def stage_of(v, t):
@@ -168,13 +190,11 @@ def write_local(grid, day, cw_hist, cw_days, cw7, ac, chronic, thr):
             detail['clim'] = [{'d': d.isoformat(), 'm': clim[(code, md(d))][0], 'lo': clim[(code, md(d))][1], 'hi': clim[(code, md(d))][2]}
                               for d in span if (code, md(d)) in clim]
             base = clim.get((code, md(day)))
-            if base:
-                a0 = v7 - base[0]
-                for k in range(1, OUTLOOK_DAYS + 1):
-                    d = day + dt.timedelta(days=k); b = clim.get((code, md(d)))
-                    if b:
-                        detail['outlook'].append({'d': d.isoformat(), 'v': round(float(np.clip(b[0] + a0 * ANOMALY_DECAY ** k, 0, 100)), 1)})
-                detail['anomaly'] = round(float(a0), 1)
+            fut = [day + dt.timedelta(days=k) for k in range(1, OUTLOOK_DAYS + 1)]
+            if base and all((code, md(d)) in clim for d in fut):
+                vals = ix.outlook(v7, base[0], [clim[(code, md(d))][0] for d in fut], ANOMALY_DECAY)
+                detail['outlook'] = [{'d': d.isoformat(), 'v': round(float(v), 1)} for d, v in zip(fut, vals)]
+                detail['anomaly'] = round(float(v7 - base[0]), 1)
         with open(os.path.join(out_dir, f'{code}.json'), 'w', encoding='utf-8') as f:
             json.dump(detail, f, ensure_ascii=False, separators=(',', ':'))
     with open(os.path.join(out_dir, 'regions.json'), 'w', encoding='utf-8') as f:
@@ -212,9 +232,37 @@ def publish(day):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--date'); ap.add_argument('--no-fetch', action='store_true')
+    ap.add_argument('--skip-if-done', action='store_true', help='오늘 기준일이 이미 성공했으면 아무것도 안 함 (예약 실행 여러 번)')
+    ap.add_argument('--allow-partial', action='store_true', help='기준일 지점이 적어도 계산 (마지막 예약 실행)')
     a = ap.parse_args()
     t_start = time.time()
+    start_utc = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     day = dt.datetime.strptime(a.date, '%Y-%m-%d').date() if a.date else kst_yesterday()
+    if a.skip_if_done and done_today(day):
+        print(f'[{day}] 이미 갱신됨 — 이번 예약 실행은 건너뜀')
+        gh_output(deploy=0)
+        return
+    try:
+        run(a, day, t_start, start_utc)
+    except NotReady as e:
+        append_runlog({'date': day.isoformat(), 'start_utc': start_utc, 'elapsed_s': round(time.time() - t_start, 1),
+                       'status': 'not_ready', 'error': str(e)[:200], 'fetch_attempts': sources.LAST['attempts'],
+                       'call_retries': sources.CALLS['retries'], **run_meta()})
+        print(f'[{day}] {e} — 지도는 전날 것 유지, 다음 예약 실행에서 다시')
+        gh_output(deploy=0)
+    except BaseException as e:
+        append_runlog({'date': day.isoformat(), 'start_utc': start_utc, 'elapsed_s': round(time.time() - t_start, 1),
+                       'status': 'fail', 'error': f'{e.__class__.__name__}: {str(e)[:180]}',
+                       'fetch_attempts': sources.LAST['attempts'], 'call_retries': sources.CALLS['retries'], **run_meta()})
+        gh_output(deploy=0)
+        raise
+
+
+class NotReady(Exception):
+    pass
+
+
+def run(a, day, t_start, start_utc):
     logs, warns = [], []
     log = lambda s: (print(s), logs.append(s))
 
@@ -225,7 +273,9 @@ def main():
         warns.append(f'DEM이 덮지 않는 칸 {grid.dem_missing:,}개(섬 등) → 그 칸은 고도 보정 없이 계산')
 
     # 1) 수집 --------------------------------------------------------------
-    obs = sources.load_year(day.year) if a.no_fetch else sources.update(day, log)
+    obs = sources.load_year(day.year) if a.no_fetch else sources.update(day, log, allow_partial=a.allow_partial)
+    if not a.no_fetch and sources.LAST['not_ready'] and day.isoformat() not in set(obs['date']):
+        raise NotReady(sources.LAST['error'])
     obs = obs[obs['date'] <= day.strftime('%Y-%m-%d')]
     by_day = {d: g for d, g in obs.groupby('date')}
 
@@ -404,9 +454,11 @@ def main():
     publish(day)
     g_today = obs[obs['date'] == day.strftime('%Y-%m-%d')]
     g_today = pick(g_today, 'ws') if len(g_today) else g_today
+    gh_output(deploy=1)
     append_runlog({
-        'date': day.isoformat(), 'run_utc': meta['generated_utc'], 'elapsed_s': round(time.time() - t_start, 1),
-        'n_stations': int(n_st_today), 'status': 'ok',
+        'date': day.isoformat(), 'start_utc': start_utc, 'run_utc': meta['generated_utc'], 'elapsed_s': round(time.time() - t_start, 1),
+        'n_stations': int(n_st_today), 'status': 'ok', 'fetch_attempts': sources.LAST['attempts'],
+        'call_retries': sources.CALLS['retries'], 'error': '', **run_meta(),
         **{f'missing_{v}': round(float(g_today[v].isna().mean() * 100), 1) if len(g_today) else '' for v in VARS},
         'gap_days_since_jan1': int(gaps), 'n_warnings': len(warns),
         'pct_caution': meta['stats']['pct_alert_1'], 'national_stage': national})

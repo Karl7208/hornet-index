@@ -67,19 +67,28 @@ MIN_HOURS = 18
 DAY_OBS = {'ta_max': 'tmax', 'ta_min': 'tmin', 'rn_day': 'rain'}
 
 
-def _kma(endpoint, params, tries=3):
+RETRY_WAIT = (5, 20, 60)          # 호출 하나가 실패하면 5초·20초·60초 뒤 다시 (모두 4번)
+CALLS = {'n': 0, 'retries': 0}    # 이번 실행의 호출·재시도 수 (runlog 기록용)
+
+
+def _kma(endpoint, params, waits=RETRY_WAIT):
+    import time
     key = os.environ.get('KMA_KEY', '').strip()
     if not key:
         raise RuntimeError('KMA_KEY 환경변수가 없습니다.')
     url = KMA_BASE + endpoint + '?' + urllib.parse.urlencode({**params, 'authKey': key})
     last = None
-    for _ in range(tries):
+    for i in range(len(waits) + 1):
+        if i:
+            CALLS['retries'] += 1
+            time.sleep(waits[i - 1])
+        CALLS['n'] += 1
         try:
             with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
                 return r.read().decode('euc-kr', errors='replace')
         except Exception as e:
             last = e
-    raise RuntimeError(f'{endpoint} 호출 실패: {last}')
+    raise RuntimeError(f'{endpoint} 호출 실패({len(waits) + 1}번): {last.__class__.__name__}: {str(last)[:120]}')
 
 
 def _data_rows(text):
@@ -164,8 +173,17 @@ def import_folder():
         print(f'  가져옴: {os.path.basename(f)} ({len(df)}행)')
 
 
-def update(upto, log, max_days=400):
-    """1월 1일 ~ upto 중 빠진 날을 기상청에서 하루씩 받아 바로 저장 (끊겨도 받은 날까지는 남음)"""
+READY_MIN = 500                   # 기준일 자료가 이보다 적은 지점(평균기온 있는 곳)이면 '아직 덜 올라옴'
+DAY_RETRY_WAIT = (60, 180)        # 기준일 받기가 통째로 실패하면 1분·3분 뒤 다시
+LAST = {'attempts': 0, 'not_ready': False, 'error': ''}
+
+
+def update(upto, log, max_days=400, allow_partial=False):
+    """1월 1일 ~ upto 중 빠진 날을 기상청에서 하루씩 받아 바로 저장 (끊겨도 받은 날까지는 남음).
+    기준일(upto)은 실패하면 통째로 두 번 더 시도하고, 지점이 READY_MIN 보다 적으면 저장하지 않음(allow_partial이면 저장).
+    결과는 LAST(시도 횟수·덜 됨·오류)에 남김."""
+    import time
+    LAST.update(attempts=0, not_ready=False, error='')
     import_folder()
     y = upto.year
     df = load_year(y)
@@ -176,11 +194,31 @@ def update(upto, log, max_days=400):
     if need:
         log(f'  기상청에서 받을 날짜 {len(need)}일 ({need[0]} ~ {need[-1]})')
     for i, d in enumerate(need, 1):
-        try:
-            part = fetch_kma_day(d)
-        except Exception as e:
-            log(f'  {d}: 수집 실패 — {str(e)[:150]}')
+        tries = (0,) + (DAY_RETRY_WAIT if d == upto else ())
+        part = None
+        for k, wait in enumerate(tries):
+            if wait:
+                log(f'  {d}: {wait}초 뒤 다시 받기 ({k + 1}번째)')
+                time.sleep(wait)
+            if d == upto:
+                LAST['attempts'] += 1
+            try:
+                part = fetch_kma_day(d)
+                break
+            except Exception as e:
+                log(f'  {d}: 수집 실패 — {str(e)[:150]}')
+                if d == upto:
+                    LAST['error'] = str(e)[:200]
+        if part is None:
             continue
+        if d == upto:
+            n_ok = int(part['tavg'].notna().sum())
+            if n_ok < READY_MIN and not allow_partial:
+                LAST['not_ready'] = True
+                LAST['error'] = f'평균기온 있는 지점 {n_ok}곳 < {READY_MIN} (아직 덜 올라옴)'
+                log(f'  {d}: {LAST["error"]} — 저장하지 않고 다음 예약 실행에서 다시')
+                continue
+            LAST['error'] = ''
         month = load_year(y)
         save_year(y, pd.concat([month, part]) if len(month) else part)
         if i % 20 == 0 or i == len(need):

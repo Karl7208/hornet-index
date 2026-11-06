@@ -2,7 +2,13 @@ name: daily-hornet-index
 
 on:
   schedule:
-    - cron: '30 21 * * *'      # 매일 06:30 KST — 전날 관측 기준
+    # 전날 관측 기준. GitHub 예약 실행은 늦게 시작할 때가 많아 여러 번 걸어 두고, 먼저 성공한 것만 계산·배포
+    # (이미 성공했으면 나머지는 몇 초 만에 끝남). 정각을 피해 혼잡을 줄임
+    - cron: '17 19 * * *'      # 04:17 KST
+    - cron: '47 20 * * *'      # 05:47 KST
+    - cron: '17 22 * * *'      # 07:17 KST
+    - cron: '47 23 * * *'      # 08:47 KST
+    - cron: '17 2 * * *'       # 11:17 KST — 마지막: 지점이 적어도 계산
   workflow_dispatch:
     inputs:
       date:
@@ -37,13 +43,19 @@ jobs:
         run: python tests/golden/test_golden.py
 
       - name: 관측 받기 + 지수 계산
+        id: calc
         env:
           KMA_KEY: ${{ secrets.KMA_KEY }}
+          RUN_SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [ -n "${{ github.event.inputs.date }}" ]; then
-            python run_daily.py --date "${{ github.event.inputs.date }}"
+            python run_daily.py --date "${{ github.event.inputs.date }}" --allow-partial
+          elif [ "${{ github.event_name }}" != "schedule" ]; then
+            python run_daily.py --allow-partial            # 손으로 실행: 다시 계산·배포
+          elif [ "${{ github.event.schedule }}" != "17 2 * * *" ]; then
+            python run_daily.py --skip-if-done
           else
-            python run_daily.py
+            python run_daily.py --skip-if-done --allow-partial
           fi
 
       - name: 관측 보관소·요약표 커밋 (실패해도 받은 관측은 남김)
@@ -56,12 +68,15 @@ jobs:
           git push
 
       - name: 지도 페이지 묶기
+        if: steps.calc.outputs.deploy == '1'
         run: |
           mkdir -p _site/data
           cp index.html local.html _site/
           cp -r data/latest _site/data/latest
       - uses: actions/upload-pages-artifact@v4
+        if: steps.calc.outputs.deploy == '1'
         with:
           path: _site
       - id: deploy
+        if: steps.calc.outputs.deploy == '1'
         uses: actions/deploy-pages@v4

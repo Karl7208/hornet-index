@@ -97,5 +97,20 @@ ix.SOLAR_THRESHOLD_MJ = saved
 report('CSI (W 기준값 = MJ 입력)', max(float(np.abs(a4[sp] - b4[sp]).max()) for sp in ix.SPECIES), 1e-9)
 print(f'  운영 설정: SOLAR_THRESHOLD_MJ = {ix.SOLAR_THRESHOLD_MJ}, τ_wasp = {ix.TAU_WASP}, 가중치 = ' + ', '.join(f'{sp} {ix.CWRI_WEIGHTS[sp] * 15:.0f}/15' for sp in ix.SPECIES))
 
+print('5) 2주 전망 (data/static/outlook.json)')
+import json
+OL = json.load(open(os.path.join(os.path.dirname(os.path.dirname(HERE)), 'data', 'static', 'outlook.json'), encoding='utf-8'))
+clim = np.array([40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53][:OL['days']], float)
+got = ix.outlook(55.0, 39.0, clim, OL['decay'])
+want = np.clip(clim + 16.0 * OL['decay'] ** np.arange(1, len(clim) + 1), 0, 100)   # 논문 13단계 식과 같은 형태
+report(f"전망 (decay {OL['decay']}, {OL['days']}일)", float(np.abs(got - want).max()), 1e-12)
+OL_CHECK = os.path.join(HERE, 'golden_outlook.csv')                 # 논문이 감쇠율을 정하면 기대값 파일을 여기에
+if os.path.exists(OL_CHECK):
+    g = pd.read_csv(OL_CHECK)
+    v = np.concatenate([ix.outlook(r.cw7_today, r.clim_today, [r[f'clim_{k}'] for k in range(1, OL['days'] + 1)], OL['decay'])
+                        for _, r in g.iterrows()])
+    e = g[[f'out_{k}' for k in range(1, OL['days'] + 1)]].to_numpy().ravel()
+    report('전망 골든 (논문)', float(np.abs(v - e).max()))
+
 print('결과:', 'OK — 앱 코드가 논문 기준 코드와 같음' if ok_all else 'MISMATCH')
 sys.exit(0 if ok_all else 1)

@@ -99,7 +99,7 @@ const EN = {
     'Colours show the 1 km hornet activity alert (yellow Caution · orange Warning · red Severe), updated every morning from Korea Meteorological Administration observations.',
   '전국 보기 (담당자용)': 'Nationwide view (staff)', '시도': 'Province', '시군구': 'City / county',
   '관심': 'Low', '주의': 'Caution', '경계': 'Warning', '심각': 'Severe',
-  '{d} 관측 기준': 'Observed {d}', '평년과 비슷한 수준입니다.': 'About normal for this time of year.',
+  '{d} 관측 기준': 'Observed {d}', '갱신 지연 — 최신 자료를 준비 중입니다': 'update delayed — new data are on the way', '평년과 비슷한 수준입니다.': 'About normal for this time of year.',
   '평년보다 높습니다 (+{a}).': 'Higher than normal (+{a}).', '평년보다 낮습니다 ({a}).': 'Lower than normal ({a}).',
   '관측 (7일 평균)': 'Observed (7-day mean)', '앞으로 2주 전망': 'Next 2 weeks (outlook)', '평년 범위': 'Normal range', '오늘': 'Today',
   '전망은 최근 추세가 서서히 평년으로 돌아간다고 보고 계산한 참고값입니다. 실제 날씨에 따라 달라질 수 있습니다.':
@@ -115,6 +115,14 @@ const EN = {
     'Tap <b>Use my location</b> or pick your province and city above<br>to see this week’s hornet activity and outlook.',
   '말벌 활동 흐름 그래프': 'Hornet activity trend chart',
 };
+
+// 갱신 지연: 정오(KST) 이후인데 어제 자료가 아니면 (아침에는 그제 자료가 정상)
+function staleNote(dateStr){
+  const now = new Date(Date.now() + 9 * 36e5);                     // KST
+  const back = now.getUTCHours() >= 12 ? 1 : 2;
+  const expect = new Date(now.getTime() - back * 864e5).toISOString().slice(0, 10);
+  return dateStr && dateStr < expect;
+}
 const T = (ko, vars) => { let s = (LANG === 'en' && EN[ko] != null) ? EN[ko] : ko; if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? ''); return s; };
 function translateDom(){
   document.documentElement.lang = LANG; if (LANG !== 'en') return;
@@ -223,7 +231,7 @@ async function show(code){
   const d = await (await fetch(`data/latest/local/${code}.json` + bust)).json();
   try { localStorage.setItem('hi.region', String(code)); } catch {}
   $('#rName').textContent = d.name; $('#body').style.display = ''; $('#emptyBox').style.display = 'none';
-  $('#dateLine').textContent = T('{d} 관측 기준', { d: d.date });
+  $('#dateLine').textContent = T('{d} 관측 기준', { d: d.date }) + (staleNote(d.date) ? ' · ' + T('갱신 지연 — 최신 자료를 준비 중입니다') : '');
   const st = d.stage, el = $('#stage');
   el.className = 'stage s' + STAGES[st];
   $('#stageBig').textContent = T(st); $('#stageSay').textContent = SAY[st];
