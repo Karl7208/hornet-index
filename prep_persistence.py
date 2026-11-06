@@ -3,7 +3,7 @@
 한 번만 실행: 논문(노트북 06)의 계절별 Gi* 지속성 래스터 → 운영 격자로 옮김
 
   python prep_persistence.py <지속성 파일들이 있는 폴더>
-  예) python prep_persistence.py tools/persistence_paper2      (논문 2 인계 static/persistence_*.tif, 2017–2024)
+  예) python prep_persistence.py tools/persistence_paper2_v4      (논문 2 v4 인계 static/persistence_*.tif, 2017–2024)
 
 폴더 안(하위 폴더 포함)의 persistence_<계절>.tif 또는 Gi_persistence_<계절>.TIF 를 찾아
 data/static/persistence_<계절>.tif 로 저장 (최근접 재표본, 값 0~1 = 가을 Gi* z > 1.96 이었던 해의 비율)

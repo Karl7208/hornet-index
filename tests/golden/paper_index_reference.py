@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 Reference implementation of the hornet and honeybee indices as defined in Wasp Paper 2
-(COMPAG system paper, 2026-11). The app must reproduce these functions; golden_test_vectors.csv
-holds inputs and expected outputs (check with:  python paper_index_reference.py --test).
+(COMPAG system paper, 2026-11, v3: solar term on the daily-total scale, rank-sum species weights). The app must reproduce these
+functions; golden_test_vectors.csv holds inputs and expected outputs:  python paper_index_reference.py --test
 
-Index definition used by the paper (main analysis):
-  * CWRI = 0.35·CSI_velutina + 0.25·CSI_mandarinia + 0.20·CSI_crabro + 0.12·CSI_analis + 0.08·CSI_ducalis
+Index definition (main analysis):
+  * CWRI = Σ w_s·CSI_s with rank-sum weights of the threat rank V. velutina > V. mandarinia > V. crabro >
+    V. ducalis > V. analis: 5/15, 4/15, 3/15, 2/15, 1/15 (v3, 2026-11-06; earlier 0.35/0.25/0.20/0.12/0.08)
     (no competition term; Paper 1 R1 found no suppression of native hornets by V. velutina)
   * CSI_s = 100 · Π of eight response functions (Tavg, RH, wind, precip, Tmax, Tmin, Tgap, Solar)
+  * Solar in the CSI: the thresholds (4–7) are on the daily-total scale (MJ m-2 d-1). The input is the
+    midday peak irradiance (W m-2) converted back with the day length N:  Rs = peak · 2N·3600 / (π·10^6)
+    (equivalently Rs from Hargreaves–Samani directly). BAI_E keeps the peak irradiance (W m-2).
   * Activity window: earliest degree-day emergence of the five species to latest termination; CWRI = 0 outside
-  * tau_wasp = 44.905 = 75th percentile of positive Aug–Oct CWRI, 1-km peninsula grid, 2017–2024
-  * Solar enters both indices as midday peak irradiance (W m-2) = pi·Rs/(2N); Rs from Hargreaves–Samani
+  * tau_wasp: 75th percentile of positive Aug–Oct CWRI, 1-km peninsula grid, 2017–2024 (value: see TAU_WASP)
 Internal species keys keep the raster folder names:
   V_analis = V. ducalis (꼬마장수말벌), V_simillima = V. analis (좀말벌).
 """
@@ -20,6 +23,7 @@ import numpy as np
 
 class C:                                   # constants that the paper code reads from config.py
     SOLAR_UNIT = 'Wm2_peak'
+    SOLAR_CSI = 'MJ'
     TERMINATION_CONSEC_DAYS = 5
     TERMINATION_SEARCH_START_DOY = 200
     CWRI_SPECIES = ['V_velutina', 'V_analis', 'V_mandarinia', 'V_simillima', 'V_crabro']
@@ -27,7 +31,7 @@ class C:                                   # constants that the paper code reads
 
 
 SPECIES_LABEL = {'V_velutina': 'V. velutina', 'V_mandarinia': 'V. mandarinia', 'V_crabro': 'V. crabro', 'V_analis': 'V. ducalis', 'V_simillima': 'V. analis'}
-TAU_WASP = 44.905
+TAU_WASP = None        # value in tau_wasp.txt written by tools/recompose_cwri.py for the main analysis
 TAU_BEE = 30.0
 
 SPECIES_PARAMS = {'V_velutina': {'temp': ('gauss', 24.0, 8.0), 'humid': ('gauss', 75.0, 15.0), 'wind': ('sigmoid_neg', 2.0, 3.0), 'precip': ('exp_decay', 0.08), 'tmax': ('gauss', 29.0, 8.0), 'tmin': ('sigmoid_pos', 5.0, 0.5), 'tgap': ('gauss', 10.0, 5.0), 'solar': ('sigmoid_pos', 5.0, 0.3)},
@@ -40,7 +44,7 @@ PARAM_TO_VAR = {'temp': 'Tavg', 'humid': 'HMDT', 'wind': 'WDSP', 'precip': 'Rn',
 
 INTERACTION_BETA = {'V_analis': 0.0, 'V_mandarinia': 0.0, 'V_simillima': 0.0, 'V_crabro': 0.0}   # main analysis
 
-CWRI_WEIGHTS = {'V_velutina': 0.35, 'V_mandarinia': 0.25, 'V_crabro': 0.2, 'V_simillima': 0.12, 'V_analis': 0.08}
+CWRI_WEIGHTS = {'V_velutina': 5 / 15, 'V_mandarinia': 4 / 15, 'V_crabro': 3 / 15, 'V_analis': 2 / 15, 'V_simillima': 1 / 15}
 
 NATIVE = ['V_analis', 'V_mandarinia', 'V_simillima', 'V_crabro']
 
@@ -63,15 +67,36 @@ def _response(x, p):
     return np.clip(r, 0, 1)
 
 
+def peak_to_mj(peak, n_hours):
+    """Inverse of the Wm2_peak conversion: midday peak irradiance (W m-2) → daily total (MJ m-2 d-1)."""
+    return np.asarray(peak, float) * 2 * np.asarray(n_hours, float) * 3600 / (np.pi * 1e6)
+
+
+def csi_solar_input(w):
+    """Solar input of the CSI response functions.
+    config.SOLAR_CSI = 'MJ': the solar thresholds (4–7) are read on the daily-total scale (MJ m-2 d-1);
+    the daily total is w['Solar_MJ'], or is recovered from the midday peak w['Solar'] with day length w['N'] (h).
+    'raw': the midday peak irradiance is passed unchanged (the thresholds then never bind)."""
+    if getattr(C, 'SOLAR_CSI', 'raw') != 'MJ':
+        return w['Solar']
+    if 'Solar_MJ' in w:
+        return w['Solar_MJ']
+    if 'N' in w:
+        return peak_to_mj(w['Solar'], w['N'])
+    raise KeyError("SOLAR_CSI = 'MJ' needs w['Solar_MJ'] or day length w['N']")
+
+
 def cwri(w):
-    """w: dict of (station, day) arrays with keys Tavg Tmax Tmin Tgap HMDT WDSP Rn Solar.
+    """w: dict of (station, day) arrays with keys Tavg Tmax Tmin Tgap HMDT WDSP Rn Solar
+    (+ Solar_MJ or N when config.SOLAR_CSI = 'MJ').
     The V. velutina z-score of the IAI is taken across stations on each day
     (the rasters used all peninsula pixels of the day)."""
     csi = {}
+    sol = csi_solar_input(w)
     for sp, prm in SPECIES_PARAMS.items():
         prod = np.ones_like(w['Tavg'], dtype=np.float64)
         for k, v in PARAM_TO_VAR.items():
-            prod *= _response(w[v], prm[k])
+            prod *= _response(sol if v == 'Solar' else w[v], prm[k])
         csi[sp] = prod * 100.0
     vel = csi['V_velutina']
     mu = np.nanmean(vel, axis=0, keepdims=True)
@@ -190,9 +215,7 @@ def activity_window(T):
 
 
 
-def _weather(df):
-    return {k: df[k].to_numpy(float)[None, :] for k in ('Tavg', 'Tmax', 'Tmin', 'Tgap', 'HMDT', 'WDSP', 'Rn', 'Solar')}
-
+VARS = ('Tavg', 'Tmax', 'Tmin', 'Tgap', 'HMDT', 'WDSP', 'Rn', 'Solar', 'N')
 
 if __name__ == '__main__':
     import pandas as pd
@@ -200,12 +223,15 @@ if __name__ == '__main__':
     a.add_argument('--test', default='golden_test_vectors.csv')
     g = a.parse_args()
     df = pd.read_csv(g.test)
-    w = _weather(df)
+    w = {k: df[k].to_numpy(float)[None, :] for k in VARS}
+    n_chk = float(np.nanmax(np.abs(daylength(df['lat'].to_numpy(float), df['doy'].to_numpy(float)).diagonal() - df['N'])))
     got = {'CWRI': cwri(w)[0], 'BAI_E': bai_e(w)[0]}
+    sol = csi_solar_input(w)
     for sp in SPECIES_PARAMS:
-        prod = np.ones(len(df))
+        prod = np.ones((1, len(df)))
         for k, v in PARAM_TO_VAR.items():
-            prod *= _response(w[v][0], SPECIES_PARAMS[sp][k])
-        got['CSI_' + sp] = prod * 100
+            prod *= _response(sol if v == 'Solar' else w[v], SPECIES_PARAMS[sp][k])
+        got['CSI_' + sp] = prod[0] * 100
     worst = max(float(np.nanmax(np.abs(got[c] - df[c].to_numpy(float)))) for c in got)
-    print(f'{len(df)} rows, max |difference| = {worst:.2e}  ->', 'OK' if worst < 1e-6 else 'MISMATCH')
+    print(f'{len(df)} rows, day length check {n_chk:.1e}, max |difference| = {worst:.2e}  ->',
+          'OK' if worst < 1e-6 and n_chk < 1e-9 else 'MISMATCH')
