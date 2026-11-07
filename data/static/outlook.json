@@ -1,6 +1,7 @@
 {
- "decay": 0.8,
+ "decay": 0.93,
  "days": 14,
  "rule": "outlook(d+k) = clim7_mean(d+k) + (cw7_today - clim7_mean(today)) * decay^k, clipped 0-100; clim7_mean = 1991-2020 mean of the district 7-day CWRI for that month-day (no further smoothing; 02-29 uses 02-28)",
- "source": "operational assumption (persistence of today's anomaly, 20%/day decay); to be replaced by the paper 2 step-13 fit (1991-2020 fit, 2021-2025 check)"
+ "source": "paper 2 step 13 Part C: fitted on 1991-2020 (r = 0.93/day, e-folding 13.8 d), checked on 2021-2025; skill to about 5 days, near climatology beyond 7 days (2026-11-07)",
+ "display": "days 1-7 drawn as outlook; days 8-14 shown faded as near normal (for reference)"
 }
