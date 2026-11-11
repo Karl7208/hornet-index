@@ -71,7 +71,7 @@ jobs:
         if: steps.calc.outputs.deploy == '1'
         run: |
           mkdir -p _site/data
-          cp index.html local.html _site/
+          cp index.html local.html staff-gate.js _site/
           cp -r data/latest _site/data/latest
       - uses: actions/upload-pages-artifact@v4
         if: steps.calc.outputs.deploy == '1'
