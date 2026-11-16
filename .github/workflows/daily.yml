@@ -72,6 +72,7 @@ jobs:
         run: |
           mkdir -p _site/data
           cp index.html local.html staff-gate.js _site/
+          cp -r vendor _site/vendor
           cp -r data/latest _site/data/latest
       - uses: actions/upload-pages-artifact@v4
         if: steps.calc.outputs.deploy == '1'

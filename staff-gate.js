@@ -41,7 +41,7 @@
   const load = src => new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('load')); document.head.appendChild(s); });
   (async () => {
     try {
-      if (!window.supabase) await load('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js');
+      if (!window.supabase) await load('vendor/supabase-2.119.0.js');
       client = window.supabase.createClient(SUPA_URL, SUPA_ANON);
       const r = await client.auth.getSession();
       if (r.data && r.data.session) return open();
