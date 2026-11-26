@@ -1,0 +1,31 @@
+name: Supabase 휴면 방지 (하루 한 번)
+
+# Supabase 무료 요금제는 7일 동안 요청이 없으면 프로젝트를 멈춤 → 신고 앱이 안 열림.
+# 하루 한 번 아주 작은 읽기 요청을 보내 깨어 있게 함. 주소와 공개용(anon) 키는 이 저장소 staff-gate.js 에 이미 있는 값을 읽음 (비밀 아님).
+# 시민용 "내 신고" 함수를 없는 번호로 불러 빈 목록을 받음 — 자료를 읽거나 바꾸지 않음.
+on:
+  schedule:
+    - cron: "23 3 * * *"   # 매일 12:23 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: staff-gate.js
+          sparse-checkout-cone-mode: false
+      - name: 작은 요청 보내기
+        run: |
+          URL=$(sed -n "s/.*SUPA_URL = '\([^']*\)'.*/\1/p" staff-gate.js)
+          KEY=$(sed -n "s/.*SUPA_ANON = '\([^']*\)'.*/\1/p" staff-gate.js)
+          test -n "$URL" && test -n "$KEY"
+          code=$(curl -sS -o out.json -w '%{http_code}' -X POST "$URL/rest/v1/rpc/my_reports" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_reporter":"U-keepalive"}')
+          echo "응답 코드 $code · $(head -c 80 out.json)"
+          test "$code" = "200"
